@@ -3,7 +3,8 @@ name = "micra-core"
 description = "Núcleo de Micra: runtimes de Java, proveedores de modpacks y gestión del proceso del servidor"
 version.workspace = true
 edition.workspace = true
-license.workspace = true
+license-file.workspace = true
+publish.workspace = true
 
 [dependencies]
 tokio.workspace = true

@@ -30,6 +30,8 @@
     "targets": ["nsis", "deb", "rpm", "appimage"],
     "category": "Game",
     "publisher": "volo340",
+    "copyright": "Copyright (c) 2026 volo340. Todos los derechos reservados.",
+    "license": "LicenseRef-Proprietary",
     "shortDescription": "Convierte tu PC en un servidor de Minecraft",
     "longDescription": "Micra crea y gestiona servidores de Minecraft (Vanilla, Fabric, Forge, NeoForge y modpacks de Modrinth y CurseForge) sin configurar nada a mano: descarga Java automáticamente, hace copias del mundo, actualiza mods y modpacks, abre el puerto o crea un túnel para jugar con amigos y muestra la consola, la CPU, la RAM, los TPS y los jugadores en tiempo real.",
     "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.png", "icons/icon.ico"],
