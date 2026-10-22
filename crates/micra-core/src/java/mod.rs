@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::download::{download_file, ExpectedHash, HashAlgo, Progress};
 use crate::paths::AppPaths;
-use crate::{archive, Error, Result};
+use crate::{archive, tr, Error, Result};
 
 const MARKER_FILE: &str = "micra-runtime.json";
 
@@ -71,15 +71,19 @@ impl JavaManager {
         tracing::info!(major, release = %release.release_name, "instalando Java");
 
         let archive_path = self.paths.cache().join(&release.file_name);
-        let expected = release
-            .sha256
-            .as_ref()
-            .map(|h| ExpectedHash::new(HashAlgo::Sha256, h));
+        // Sin hash publicado no se instala: Java ejecuta todo lo demás.
+        let sha256 = release.sha256.as_ref().ok_or_else(|| {
+            Error::Api(tr!(
+                "Adoptium no publicó el hash de Java {major}, así que no se puede verificar",
+                "Adoptium did not publish the hash for Java {major}, so it cannot be verified"
+            ))
+        })?;
+        let expected = ExpectedHash::new(HashAlgo::Sha256, sha256);
         download_file(
             &self.http,
             &release.url,
             &archive_path,
-            expected.as_ref(),
+            Some(&expected),
             progress,
         )
         .await?;
@@ -94,7 +98,7 @@ impl JavaManager {
                 std::fs::remove_dir_all(&staging_clone)?;
             }
             if file_name.ends_with(".zip") {
-                archive::extract_zip(&archive_clone, &staging_clone, false)
+                archive::extract_zip(&archive_clone, &staging_clone, false).map(|_| ())
             } else {
                 archive::extract_tar_gz(&archive_clone, &staging_clone)
             }

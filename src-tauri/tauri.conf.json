@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Micra",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "identifier": "io.github.volo340.micra",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -31,20 +31,26 @@
     "category": "Game",
     "publisher": "volo340",
     "shortDescription": "Convierte tu PC en un servidor de Minecraft",
-    "longDescription": "Micra crea y gestiona servidores de Minecraft (Vanilla, Fabric, Forge, NeoForge y modpacks de Modrinth y CurseForge) sin configurar nada a mano: descarga Java automáticamente y muestra la consola, la CPU, la RAM y los jugadores en tiempo real.",
-    "icon": [
-      "icons/32x32.png",
-      "icons/128x128.png",
-      "icons/128x128@2x.png",
-      "icons/icon.png",
-      "icons/icon.ico"
-    ],
+    "longDescription": "Micra crea y gestiona servidores de Minecraft (Vanilla, Fabric, Forge, NeoForge y modpacks de Modrinth y CurseForge) sin configurar nada a mano: descarga Java automáticamente, hace copias del mundo, actualiza mods y modpacks, abre el puerto o crea un túnel para jugar con amigos y muestra la consola, la CPU, la RAM, los TPS y los jugadores en tiempo real.",
+    "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.png", "icons/icon.ico"],
     "windows": {
-      "webviewInstallMode": { "type": "downloadBootstrapper", "silent": true },
+      "webviewInstallMode": {
+        "type": "downloadBootstrapper",
+        "silent": true
+      },
       "nsis": {
         "installMode": "currentUser",
-        "languages": ["Spanish", "English"],
+        "languages": ["Spanish", "English", "Portuguese", "French", "German"],
         "displayLanguageSelector": false
+      }
+    }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDU2MENEMDlGOUYwODNBNDUKUldSRk9naWZuOUFNVmk0VWdoM2h4Nm5rMW8ySUF4a2tPVkszS0RiMXFSWmc2NWJEcjBZQ3h3Y3QK",
+      "endpoints": ["https://github.com/volo340/Micra/releases/latest/download/latest.json"],
+      "windows": {
+        "installMode": "passive"
       }
     }
   }

@@ -1,14 +1,8 @@
-import { Cpu, ExternalLink, Gamepad2, Hash, MemoryStick, Package, Type } from "lucide-react";
+import { Cpu, ExternalLink, FolderInput, Gamepad2, Hash, MemoryStick, Package, Type, UserRound } from "lucide-react";
+import { useT } from "../../i18n";
 import { api } from "../../lib/api";
-import { formatCores, formatGb } from "../../lib/format";
+import { formatCores, formatGb, loaderLabel } from "../../lib/format";
 import type { Draft } from "./draft";
-
-const KIND_LABEL = {
-  vanilla: "Vanilla",
-  fabric: "Fabric",
-  modrinth: "Modpack de Modrinth",
-  curseforge: "Modpack de CurseForge",
-};
 
 interface Props {
   draft: Draft;
@@ -16,28 +10,35 @@ interface Props {
 }
 
 export function ReviewStep({ draft, onChange }: Props) {
+  const t = useT();
+  const analysis = draft.analysis;
+  const version = analysis?.mcVersion ?? draft.mcVersion;
   const rows = [
-    { icon: Type, label: "Nombre", value: draft.name.trim() },
-    { icon: Package, label: "Tipo", value: KIND_LABEL[draft.kind] },
+    { icon: Type, label: t.wizard.name, value: draft.name.trim() },
+    { icon: Package, label: t.wizard.type, value: t.wizard.kinds[draft.kind].title },
+    ...(analysis ? [{ icon: FolderInput, label: t.wizard.folder, value: analysis.path }] : []),
     draft.pack
-      ? { icon: Gamepad2, label: "Modpack", value: `${draft.pack.title} · ${draft.pack.versionLabel ?? ""}` }
-      : { icon: Gamepad2, label: "Versión", value: `Minecraft ${draft.mcVersion}` },
-    { icon: MemoryStick, label: "Memoria", value: `Hasta ${formatGb(draft.maxMb)}` },
+      ? { icon: Gamepad2, label: t.wizard.modpack, value: `${draft.pack.title} · ${draft.pack.versionLabel ?? ""}` }
+      : {
+          icon: Gamepad2,
+          label: t.wizard.version,
+          value: `${t.common.minecraft(version ?? "?")}${analysis && analysis.loader.kind !== "vanilla" ? ` · ${loaderLabel(analysis.loader)}` : ""}`,
+        },
+    ...(draft.owner.trim() ? [{ icon: UserRound, label: t.wizard.ownerShort, value: draft.owner.trim() }] : []),
+    { icon: MemoryStick, label: t.wizard.memory, value: t.wizard.upTo(formatGb(draft.maxMb)) },
     {
       icon: Cpu,
-      label: "Procesador",
-      value: draft.allCores ? "Todos los núcleos" : `Núcleos ${formatCores(draft.cores)}`,
+      label: t.wizard.cpu,
+      value: draft.allCores ? t.wizard.allCores : t.common.cores(formatCores(draft.cores)),
     },
-    { icon: Hash, label: "Puerto", value: String(draft.port) },
+    { icon: Hash, label: t.resources.port, value: String(draft.port) },
   ];
 
   return (
     <div className="step">
       <div className="step-intro">
-        <h2>Revisa y crea tu servidor</h2>
-        <p className="muted">
-          Micra descargará Java y los archivos necesarios. Puede tardar unos minutos la primera vez.
-        </p>
+        <h2>{draft.kind === "import" ? t.wizard.reviewImportTitle : t.wizard.reviewTitle}</h2>
+        <p className="muted">{draft.kind === "import" ? t.wizard.reviewImportHint : t.wizard.reviewHint}</p>
       </div>
 
       <dl className="summary">
@@ -56,16 +57,13 @@ export function ReviewStep({ draft, onChange }: Props) {
         <label className="check">
           <input type="checkbox" checked={draft.eula} onChange={(e) => onChange({ eula: e.target.checked })} />
           <span>
-            <strong>Acepto el EULA de Minecraft</strong>
-            <span className="muted">
-              Es el acuerdo de licencia de Mojang que cualquier servidor necesita aceptar. Micra lo marca por ti en los
-              archivos del servidor.
-            </span>
+            <strong>{t.wizard.eula}</strong>
+            <span className="muted">{t.wizard.eulaHint}</span>
           </span>
         </label>
         <button className="btn btn-ghost btn-sm" onClick={() => api.openUrl("https://aka.ms/MinecraftEULA")}>
           <ExternalLink size={14} />
-          Leer el EULA
+          {t.wizard.readEula}
         </button>
       </div>
     </div>
