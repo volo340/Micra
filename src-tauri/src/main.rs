@@ -17,9 +17,12 @@ fn main() {
     let state = state::AppState::new().expect("no se pudo inicializar el estado de la app");
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_opener::init())
         .manage(state)
         .invoke_handler(tauri::generate_handler![
+            commands::app_info,
             commands::hardware_info,
+            commands::network_info,
             commands::minecraft_versions,
             commands::list_java_runtimes,
             commands::search_modrinth,
@@ -32,6 +35,8 @@ fn main() {
             commands::start_server,
             commands::stop_server,
             commands::send_command,
+            commands::open_server_folder,
+            commands::open_data_folder,
         ])
         .build(tauri::generate_context!())
         .expect("error al construir la app")

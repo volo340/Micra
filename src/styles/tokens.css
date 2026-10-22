@@ -1,0 +1,56 @@
+/*
+ * Tokens de diseño de Micra.
+ * La paleta sale del logo: verde hierba como color de marca sobre grises
+ * pizarra (las caras del bloque). Micra es solo oscura, por eso no hay tema claro.
+ */
+:root {
+  color-scheme: dark;
+
+  /* Superficies, de la más profunda a la más elevada */
+  --bg: #0a0e13;
+  --bg-sidebar: #0d1218;
+  --surface: #121820;
+  --surface-2: #18202a;
+  --surface-3: #1f2833;
+  --border: #212b37;
+  --border-strong: #2c3846;
+
+  /* Texto */
+  --text: #e9eef5;
+  --text-2: #a7b2c2;
+  --text-3: #6e7a8c;
+
+  /* Marca (la hierba del logo) */
+  --brand: #2fd27a;
+  --brand-hover: #45de8c;
+  --brand-press: #22b867;
+  --brand-ink: #04170c;
+  --brand-soft: rgba(47, 210, 122, 0.12);
+  --brand-line: rgba(47, 210, 122, 0.4);
+
+  /* Estados: siempre acompañados de icono o texto */
+  --good: #2fd27a;
+  --warning: #f5b13d;
+  --warning-soft: rgba(245, 177, 61, 0.12);
+  --critical: #f0565a;
+  --critical-soft: rgba(240, 86, 90, 0.12);
+
+  /* Series de las gráficas (validadas contra --surface: daltonismo y contraste) */
+  --series-cpu: #3987e5;
+  --series-ram: #d55181;
+
+  /* Tipografía */
+  --font: "Inter Variable", "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "JetBrains Mono Variable", "JetBrains Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
+
+  /* Forma y profundidad */
+  --r-sm: 8px;
+  --r: 12px;
+  --r-lg: 16px;
+  --r-xl: 20px;
+  --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.35);
+  --shadow-2: 0 12px 32px rgba(0, 0, 0, 0.45);
+  --ring: 0 0 0 3px rgba(47, 210, 122, 0.35);
+
+  --ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+}

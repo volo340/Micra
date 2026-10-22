@@ -10,6 +10,7 @@ pub mod error;
 pub mod hardware;
 pub mod http;
 pub mod java;
+pub mod net;
 pub mod paths;
 pub mod provision;
 pub mod providers;

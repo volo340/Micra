@@ -19,6 +19,7 @@ use micra_core::server::process::{ServerEvent, ServerHandle, ServerStatus};
 use micra_core::Error;
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, State};
+use tauri_plugin_opener::OpenerExt;
 use tokio::sync::broadcast::error::RecvError;
 
 use crate::state::AppState;
@@ -46,11 +47,42 @@ pub struct ServerSummary {
     config: ServerConfig,
     status: ServerStatus,
     players: Vec<String>,
+    dir: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AppInfo {
+    version: &'static str,
+    data_dir: String,
+    curseforge_enabled: bool,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NetworkInfo {
+    local_ip: Option<String>,
+}
+
+#[tauri::command]
+pub fn app_info(state: State<'_, AppState>) -> AppInfo {
+    AppInfo {
+        version: env!("CARGO_PKG_VERSION"),
+        data_dir: state.paths.root().display().to_string(),
+        curseforge_enabled: state.curseforge.is_some(),
+    }
 }
 
 #[tauri::command]
 pub fn hardware_info() -> HardwareInfo {
     micra_core::hardware::hardware_info()
+}
+
+#[tauri::command]
+pub fn network_info() -> NetworkInfo {
+    NetworkInfo {
+        local_ip: micra_core::net::local_ip().map(|ip| ip.to_string()),
+    }
 }
 
 /// Versiones "release" de Minecraft, de la más nueva a la más antigua.
@@ -116,11 +148,12 @@ pub async fn list_servers(state: State<'_, AppState>) -> CmdResult<Vec<ServerSum
     Ok(list_server_dirs(&state.paths)
         .await?
         .into_iter()
-        .map(|(config, _)| {
+        .map(|(config, dir)| {
             let handle = running.get(&config.id);
             ServerSummary {
                 status: handle.map_or(ServerStatus::Stopped, |h| h.status()),
                 players: handle.map(|h| h.players()).unwrap_or_default(),
+                dir: dir.display().to_string(),
                 config,
             }
         })
@@ -151,7 +184,7 @@ pub async fn start_server(app: AppHandle, state: State<'_, AppState>, id: String
     if state.running.read().await.get(&id).is_some_and(|h| h.is_alive()) {
         return Err(Error::AlreadyRunning);
     }
-    let dir = state.paths.server_dir(&id);
+    let dir = server_dir(&state, &id)?;
     let config = ServerConfig::load(&dir).await?;
     let java = state.java.ensure(config.java_major, None).await?;
     let (handle, mut events) = ServerHandle::launch(&config, &dir, &java).await?;
@@ -216,6 +249,37 @@ pub async fn stop_server(state: State<'_, AppState>, id: String) -> CmdResult<()
 pub async fn send_command(state: State<'_, AppState>, id: String, command: String) -> CmdResult<()> {
     let handle = state.running.read().await.get(&id).cloned().ok_or(Error::NotRunning)?;
     handle.send_command(&command).await
+}
+
+/// Abre la carpeta del servidor en el explorador de archivos.
+#[tauri::command]
+pub fn open_server_folder(app: AppHandle, state: State<'_, AppState>, id: String) -> CmdResult<()> {
+    open_path(&app, &server_dir(&state, &id)?)
+}
+
+#[tauri::command]
+pub fn open_data_folder(app: AppHandle, state: State<'_, AppState>) -> CmdResult<()> {
+    let dir = state.paths.root().to_path_buf();
+    std::fs::create_dir_all(&dir)?;
+    open_path(&app, &dir)
+}
+
+/// Carpeta de un servidor existente. El id llega desde la interfaz y los ids
+/// de Micra son siempre slugs (`[a-z0-9-]`), así que se rechaza cualquier otra
+/// cosa: separadores, `..` o prefijos de unidad como `C:` en Windows.
+fn server_dir(state: &AppState, id: &str) -> CmdResult<std::path::PathBuf> {
+    let is_slug = !id.is_empty() && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-');
+    let dir = state.paths.server_dir(id);
+    if !is_slug || !dir.is_dir() {
+        return Err(Error::NotFound(format!("servidor {id}")));
+    }
+    Ok(dir)
+}
+
+fn open_path(app: &AppHandle, path: &std::path::Path) -> CmdResult<()> {
+    app.opener()
+        .open_path(path.display().to_string(), None::<&str>)
+        .map_err(|e| Error::Api(format!("no se pudo abrir la carpeta: {e}")))
 }
 
 fn curseforge_missing() -> Error {

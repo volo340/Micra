@@ -27,8 +27,9 @@ use crate::{archive, hardware, Error, Result};
 pub enum ServerSource {
     #[serde(rename_all = "camelCase")]
     Vanilla { mc_version: String },
+    /// Sin `loader_version` se usa la última versión estable.
     #[serde(rename_all = "camelCase")]
-    Fabric { mc_version: String, loader_version: String },
+    Fabric { mc_version: String, loader_version: Option<String> },
     #[serde(rename_all = "camelCase")]
     Modrinth { version_id: String },
     #[serde(rename_all = "camelCase")]
@@ -94,11 +95,13 @@ impl Provisioner<'_> {
         let files_progress = |done, total| on_step(ProvisionStep::DownloadingFiles { done, total });
         let (mc_version, loader, prepackaged) = match &req.source {
             ServerSource::Vanilla { mc_version } => (mc_version.clone(), Loader::Vanilla, false),
-            ServerSource::Fabric { mc_version, loader_version } => (
-                mc_version.clone(),
-                Loader::Fabric { loader_version: loader_version.clone() },
-                false,
-            ),
+            ServerSource::Fabric { mc_version, loader_version } => {
+                let loader_version = match loader_version {
+                    Some(v) => v.clone(),
+                    None => loaders::latest_fabric_loader(self.http, mc_version).await?,
+                };
+                (mc_version.clone(), Loader::Fabric { loader_version }, false)
+            }
             ServerSource::Modrinth { version_id } => {
                 let version = self.modrinth.version(version_id).await?;
                 let file = version

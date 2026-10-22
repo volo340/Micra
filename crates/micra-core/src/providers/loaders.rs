@@ -71,6 +71,34 @@ struct FabricInstaller {
     stable: bool,
 }
 
+#[derive(Deserialize)]
+struct FabricLoaderEntry {
+    loader: FabricLoader,
+}
+
+#[derive(Deserialize)]
+struct FabricLoader {
+    version: String,
+    stable: bool,
+}
+
+/// Última versión estable del loader de Fabric compatible con `mc_version`.
+pub async fn latest_fabric_loader(http: &reqwest::Client, mc_version: &str) -> Result<String> {
+    let entries: Vec<FabricLoaderEntry> = http
+        .get(format!("https://meta.fabricmc.net/v2/versions/loader/{mc_version}"))
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+    entries
+        .iter()
+        .find(|e| e.loader.stable)
+        .or(entries.first())
+        .map(|e| e.loader.version.clone())
+        .ok_or_else(|| Error::NotFound(format!("Fabric para Minecraft {mc_version}")))
+}
+
 async fn install_fabric(
     http: &reqwest::Client,
     mc_version: &str,
