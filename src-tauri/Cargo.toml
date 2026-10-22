@@ -1,0 +1,19 @@
+[package]
+name = "micra"
+description = "Convierte tu PC en un servidor de Minecraft"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+micra-core.workspace = true
+tauri = { version = "2", features = [] }
+tokio.workspace = true
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
