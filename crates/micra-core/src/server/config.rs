@@ -166,6 +166,8 @@ pub struct GuardPolicy {
     pub window_secs: u32,
     /// Duración del bloqueo; 0 = permanente.
     pub ban_minutes: u32,
+    /// Jugadores conectados a la vez desde una misma IP de internet; 0 = sin límite.
+    pub max_per_ip: u32,
 }
 
 impl Default for GuardPolicy {
@@ -175,6 +177,7 @@ impl Default for GuardPolicy {
             max_attempts: 8,
             window_secs: 60,
             ban_minutes: 60,
+            max_per_ip: 4,
         }
     }
 }

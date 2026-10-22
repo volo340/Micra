@@ -2395,7 +2395,6 @@ dependencies = [
  "sysinfo",
  "tar",
  "tempfile",
- "thiserror 2.0.21",
  "tokio",
  "tracing",
  "windows-sys 0.59.0",
