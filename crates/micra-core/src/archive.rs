@@ -32,7 +32,11 @@ pub fn safe_join(base: &Path, relative: &str) -> Result<PathBuf> {
 /// ese nivel para que los archivos queden directamente en `dest`.
 pub fn extract_zip(archive: &Path, dest: &Path, strip_single_root: bool) -> Result<()> {
     let mut zip = zip::ZipArchive::new(File::open(archive)?)?;
-    let root = if strip_single_root { single_root(&mut zip) } else { None };
+    let root = if strip_single_root {
+        single_root(&mut zip)
+    } else {
+        None
+    };
 
     for i in 0..zip.len() {
         let mut entry = zip.by_index(i)?;
@@ -61,7 +65,9 @@ pub fn extract_zip_prefix(archive: &Path, prefix: &str, dest: &Path) -> Result<u
     for i in 0..zip.len() {
         let mut entry = zip.by_index(i)?;
         let name = entry.name().replace('\\', "/");
-        let Some(rel) = name.strip_prefix(prefix) else { continue };
+        let Some(rel) = name.strip_prefix(prefix) else {
+            continue;
+        };
         if rel.is_empty() {
             continue;
         }

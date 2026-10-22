@@ -11,11 +11,19 @@ pub const CONFIG_FILE: &str = "micra.json";
 pub enum Loader {
     Vanilla,
     #[serde(rename_all = "camelCase")]
-    Fabric { loader_version: String },
+    Fabric {
+        loader_version: String,
+    },
     #[serde(rename_all = "camelCase")]
-    Quilt { loader_version: String },
-    Forge { version: String },
-    NeoForge { version: String },
+    Quilt {
+        loader_version: String,
+    },
+    Forge {
+        version: String,
+    },
+    NeoForge {
+        version: String,
+    },
 }
 
 /// Cómo se arranca el servidor. Forge/NeoForge modernos (1.17+) ya no usan
@@ -69,7 +77,13 @@ fn default_true() -> bool {
 
 impl ServerConfig {
     pub fn validate(&self, total_memory_mb: u64, logical_cpus: usize) -> Result<()> {
-        validate_resources(&self.memory, &self.cpu, self.port, total_memory_mb, logical_cpus)
+        validate_resources(
+            &self.memory,
+            &self.cpu,
+            self.port,
+            total_memory_mb,
+            logical_cpus,
+        )
     }
 
     pub async fn load(server_dir: &Path) -> Result<Self> {
@@ -79,7 +93,11 @@ impl ServerConfig {
 
     pub async fn save(&self, server_dir: &Path) -> Result<()> {
         tokio::fs::create_dir_all(server_dir).await?;
-        tokio::fs::write(server_dir.join(CONFIG_FILE), serde_json::to_vec_pretty(self)?).await?;
+        tokio::fs::write(
+            server_dir.join(CONFIG_FILE),
+            serde_json::to_vec_pretty(self)?,
+        )
+        .await?;
         Ok(())
     }
 }
@@ -94,10 +112,14 @@ pub fn validate_resources(
     logical_cpus: usize,
 ) -> Result<()> {
     if memory.max_mb < 512 {
-        return Err(Error::InvalidConfig("la RAM máxima debe ser al menos 512 MB".into()));
+        return Err(Error::InvalidConfig(
+            "la RAM máxima debe ser al menos 512 MB".into(),
+        ));
     }
     if memory.min_mb > memory.max_mb {
-        return Err(Error::InvalidConfig("la RAM mínima no puede superar a la máxima".into()));
+        return Err(Error::InvalidConfig(
+            "la RAM mínima no puede superar a la máxima".into(),
+        ));
     }
     if total_memory_mb > 0 && memory.max_mb >= total_memory_mb {
         return Err(Error::InvalidConfig(format!(
@@ -116,7 +138,9 @@ pub fn validate_resources(
         }
     }
     if port < 1024 {
-        return Err(Error::InvalidConfig("usa un puerto entre 1024 y 65535".into()));
+        return Err(Error::InvalidConfig(
+            "usa un puerto entre 1024 y 65535".into(),
+        ));
     }
     Ok(())
 }
@@ -132,7 +156,11 @@ pub fn slugify(name: &str) -> String {
         }
     }
     let out = out.trim_end_matches('-').to_string();
-    if out.is_empty() { "servidor".into() } else { out }
+    if out.is_empty() {
+        "servidor".into()
+    } else {
+        out
+    }
 }
 
 #[cfg(test)]
@@ -146,11 +174,18 @@ mod tests {
             mc_version: "1.21.1".into(),
             loader: Loader::Vanilla,
             java_major: 21,
-            memory: MemoryConfig { min_mb: 2048, max_mb: 4096 },
-            cpu: CpuConfig { cores: Some(vec![0, 1]) },
+            memory: MemoryConfig {
+                min_mb: 2048,
+                max_mb: 4096,
+            },
+            cpu: CpuConfig {
+                cores: Some(vec![0, 1]),
+            },
             port: 25565,
             eula_accepted: true,
-            launch: LaunchTarget::Jar { path: "server.jar".into() },
+            launch: LaunchTarget::Jar {
+                path: "server.jar".into(),
+            },
             use_aikar_flags: true,
             extra_jvm_args: vec![],
         }

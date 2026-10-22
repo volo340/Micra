@@ -12,8 +12,8 @@ pub mod http;
 pub mod java;
 pub mod net;
 pub mod paths;
-pub mod provision;
 pub mod providers;
+pub mod provision;
 pub mod server;
 
 pub use error::{Error, Result};

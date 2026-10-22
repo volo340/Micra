@@ -61,8 +61,17 @@ async fn install_vanilla(
         .server
         .ok_or_else(|| Error::NotFound(format!("server.jar para {mc_version}")))?;
     let expected = ExpectedHash::new(HashAlgo::Sha1, server.sha1);
-    download_file(http, &server.url, &server_dir.join("server.jar"), Some(&expected), progress).await?;
-    Ok(LaunchTarget::Jar { path: "server.jar".into() })
+    download_file(
+        http,
+        &server.url,
+        &server_dir.join("server.jar"),
+        Some(&expected),
+        progress,
+    )
+    .await?;
+    Ok(LaunchTarget::Jar {
+        path: "server.jar".into(),
+    })
 }
 
 #[derive(Deserialize)]
@@ -85,7 +94,9 @@ struct FabricLoader {
 /// Última versión estable del loader de Fabric compatible con `mc_version`.
 pub async fn latest_fabric_loader(http: &reqwest::Client, mc_version: &str) -> Result<String> {
     let entries: Vec<FabricLoaderEntry> = http
-        .get(format!("https://meta.fabricmc.net/v2/versions/loader/{mc_version}"))
+        .get(format!(
+            "https://meta.fabricmc.net/v2/versions/loader/{mc_version}"
+        ))
         .send()
         .await?
         .error_for_status()?
@@ -137,7 +148,10 @@ async fn run_installer(
     download_file(http, url, &installer, None, progress).await?;
 
     let mut cmd = tokio::process::Command::new(&java.java_bin);
-    cmd.arg("-jar").arg(&installer).arg("--installServer").current_dir(server_dir);
+    cmd.arg("-jar")
+        .arg(&installer)
+        .arg("--installServer")
+        .current_dir(server_dir);
     #[cfg(windows)]
     cmd.creation_flags(crate::server::launcher::CREATE_NO_WINDOW);
     let output = cmd.output().await?;
@@ -146,9 +160,20 @@ async fn run_installer(
 
     if !output.status.success() {
         let tail = String::from_utf8_lossy(&output.stdout);
-        let tail: String = tail.lines().rev().take(15).collect::<Vec<_>>().into_iter().rev().collect::<Vec<_>>().join("\n");
-        return Err(Error::Api(format!("el instalador del loader falló:\n{tail}")));
+        let tail: String = tail
+            .lines()
+            .rev()
+            .take(15)
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .collect::<Vec<_>>()
+            .join("\n");
+        return Err(Error::Api(format!(
+            "el instalador del loader falló:\n{tail}"
+        )));
     }
-    detect_launch_target(server_dir)?
-        .ok_or_else(|| Error::NotFound("jar o archivo de argumentos tras instalar el loader".into()))
+    detect_launch_target(server_dir)?.ok_or_else(|| {
+        Error::NotFound("jar o archivo de argumentos tras instalar el loader".into())
+    })
 }

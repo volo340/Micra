@@ -57,7 +57,11 @@ pub fn build_args(cfg: &ServerConfig) -> Vec<String> {
 
 /// Prepara el `Command` listo para lanzar, con stdin/stdout/stderr en tubería
 /// y la afinidad de CPU aplicada en Linux (en Windows se aplica tras el spawn).
-pub fn build_command(cfg: &ServerConfig, server_dir: &Path, java: &JavaRuntime) -> tokio::process::Command {
+pub fn build_command(
+    cfg: &ServerConfig,
+    server_dir: &Path,
+    java: &JavaRuntime,
+) -> tokio::process::Command {
     use std::process::Stdio;
 
     let mut cmd = tokio::process::Command::new(&java.java_bin);
@@ -87,13 +91,20 @@ mod tests {
             id: "x".into(),
             name: "x".into(),
             mc_version: "1.21.1".into(),
-            loader: Loader::NeoForge { version: "21.1.77".into() },
+            loader: Loader::NeoForge {
+                version: "21.1.77".into(),
+            },
             java_major: 21,
-            memory: MemoryConfig { min_mb: 1024, max_mb: 6144 },
+            memory: MemoryConfig {
+                min_mb: 1024,
+                max_mb: 6144,
+            },
             cpu: CpuConfig::default(),
             port: 25565,
             eula_accepted: true,
-            launch: LaunchTarget::ArgsFile { path: "libraries/x/unix_args.txt".into() },
+            launch: LaunchTarget::ArgsFile {
+                path: "libraries/x/unix_args.txt".into(),
+            },
             use_aikar_flags: false,
             extra_jvm_args: vec![],
         };

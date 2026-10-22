@@ -75,7 +75,14 @@ impl JavaManager {
             .sha256
             .as_ref()
             .map(|h| ExpectedHash::new(HashAlgo::Sha256, h));
-        download_file(&self.http, &release.url, &archive_path, expected.as_ref(), progress).await?;
+        download_file(
+            &self.http,
+            &release.url,
+            &archive_path,
+            expected.as_ref(),
+            progress,
+        )
+        .await?;
 
         let target = self.paths.runtime_dir(major);
         let staging = self.paths.runtimes().join(format!(".staging-java-{major}"));
@@ -111,9 +118,16 @@ impl JavaManager {
             home: target.clone(),
         };
         if !runtime.java_bin.is_file() {
-            return Err(Error::NotFound(format!("binario de Java en {}", target.display())));
+            return Err(Error::NotFound(format!(
+                "binario de Java en {}",
+                target.display()
+            )));
         }
-        tokio::fs::write(target.join(MARKER_FILE), serde_json::to_vec_pretty(&runtime)?).await?;
+        tokio::fs::write(
+            target.join(MARKER_FILE),
+            serde_json::to_vec_pretty(&runtime)?,
+        )
+        .await?;
         Ok(runtime)
     }
 }
@@ -157,7 +171,10 @@ fn find_java_home(staging: &Path) -> Result<PathBuf> {
             return Ok(path);
         }
     }
-    Err(Error::NotFound(format!("JAVA_HOME dentro de {}", staging.display())))
+    Err(Error::NotFound(format!(
+        "JAVA_HOME dentro de {}",
+        staging.display()
+    )))
 }
 
 #[cfg(test)]

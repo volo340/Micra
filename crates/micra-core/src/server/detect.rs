@@ -6,11 +6,19 @@ use std::path::{Path, PathBuf};
 use crate::server::config::LaunchTarget;
 use crate::Result;
 
-const ARGS_FILE: &str = if cfg!(windows) { "win_args.txt" } else { "unix_args.txt" };
+const ARGS_FILE: &str = if cfg!(windows) {
+    "win_args.txt"
+} else {
+    "unix_args.txt"
+};
 
 pub fn detect_launch_target(server_dir: &Path) -> Result<Option<LaunchTarget>> {
     // 1) Forge/NeoForge modernos: libraries/net/<org>/<loader>/<versión>/unix_args.txt
-    for loader_dir in ["net/neoforged/neoforge", "net/neoforged/forge", "net/minecraftforge/forge"] {
+    for loader_dir in [
+        "net/neoforged/neoforge",
+        "net/neoforged/forge",
+        "net/minecraftforge/forge",
+    ] {
         let base = server_dir.join("libraries").join(loader_dir);
         if let Some(args) = newest_args_file(&base)? {
             let rel = args.strip_prefix(server_dir).unwrap_or(&args).to_path_buf();
@@ -32,11 +40,15 @@ pub fn detect_launch_target(server_dir: &Path) -> Result<Option<LaunchTarget>> {
         .or_else(|| pick(&|n| n == "server.jar"))
         .or_else(|| (jars.len() == 1).then(|| jars[0].clone()));
 
-    Ok(jar.map(|j| LaunchTarget::Jar { path: PathBuf::from(j) }))
+    Ok(jar.map(|j| LaunchTarget::Jar {
+        path: PathBuf::from(j),
+    }))
 }
 
 fn newest_args_file(base: &Path) -> Result<Option<PathBuf>> {
-    let Ok(entries) = std::fs::read_dir(base) else { return Ok(None) };
+    let Ok(entries) = std::fs::read_dir(base) else {
+        return Ok(None);
+    };
     let mut candidates: Vec<PathBuf> = entries
         .flatten()
         .map(|e| e.path().join(ARGS_FILE))
@@ -56,7 +68,9 @@ mod tests {
         std::fs::write(dir.path().join("server.jar"), b"").unwrap();
         assert_eq!(
             detect_launch_target(dir.path()).unwrap(),
-            Some(LaunchTarget::Jar { path: "server.jar".into() })
+            Some(LaunchTarget::Jar {
+                path: "server.jar".into()
+            })
         );
 
         let v = dir.path().join("libraries/net/neoforged/neoforge/21.1.77");

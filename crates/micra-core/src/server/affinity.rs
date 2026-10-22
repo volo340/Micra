@@ -9,7 +9,10 @@
 
 /// Máscara de bits para una lista de CPUs (CPUs >= 64 se ignoran).
 pub fn cores_to_mask(cores: &[usize]) -> u64 {
-    cores.iter().filter(|&&c| c < 64).fold(0u64, |mask, &c| mask | (1u64 << c))
+    cores
+        .iter()
+        .filter(|&&c| c < 64)
+        .fold(0u64, |mask, &c| mask | (1u64 << c))
 }
 
 #[cfg(target_os = "linux")]

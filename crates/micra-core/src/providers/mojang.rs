@@ -62,7 +62,13 @@ impl VersionDetails {
 }
 
 pub async fn fetch_manifest(client: &reqwest::Client) -> Result<VersionManifest> {
-    Ok(client.get(MANIFEST_URL).send().await?.error_for_status()?.json().await?)
+    Ok(client
+        .get(MANIFEST_URL)
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?)
 }
 
 pub async fn fetch_version(client: &reqwest::Client, version_id: &str) -> Result<VersionDetails> {
@@ -72,5 +78,11 @@ pub async fn fetch_version(client: &reqwest::Client, version_id: &str) -> Result
         .iter()
         .find(|v| v.id == version_id)
         .ok_or_else(|| Error::NotFound(format!("Minecraft {version_id}")))?;
-    Ok(client.get(&entry.url).send().await?.error_for_status()?.json().await?)
+    Ok(client
+        .get(&entry.url)
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?)
 }

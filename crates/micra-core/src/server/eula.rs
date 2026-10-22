@@ -10,7 +10,8 @@ use crate::{Error, Result};
 pub async fn write_eula(server_dir: &Path, accepted: bool) -> Result<()> {
     if !accepted {
         return Err(Error::InvalidConfig(
-            "debes aceptar el EULA de Minecraft (https://aka.ms/MinecraftEULA) para continuar".into(),
+            "debes aceptar el EULA de Minecraft (https://aka.ms/MinecraftEULA) para continuar"
+                .into(),
         ));
     }
     let content = "# Aceptado por el usuario desde Micra.\n\

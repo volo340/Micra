@@ -22,7 +22,10 @@ pub struct ExpectedHash {
 
 impl ExpectedHash {
     pub fn new(algo: HashAlgo, hex: impl Into<String>) -> Self {
-        Self { algo, hex: hex.into().to_ascii_lowercase() }
+        Self {
+            algo,
+            hex: hex.into().to_ascii_lowercase(),
+        }
     }
 }
 
