@@ -1,0 +1,29 @@
+Copyright (c) 2026 volo340. Todos los derechos reservados.
+
+El código fuente de Micra se publica en GitHub para que se pueda ver, pero no
+se concede ninguna licencia sobre él: sin permiso por escrito de volo340 no
+está permitido copiarlo, modificarlo, distribuirlo ni usarlo en otros
+proyectos, ni entero ni en parte. Verlo y hacer un fork dentro de GitHub sigue
+siendo posible, como establecen las condiciones de uso de GitHub.
+
+Los instaladores publicados en https://github.com/volo340/Micra/releases se
+pueden descargar e instalar gratis para usar Micra.
+
+Las bibliotecas, fuentes e iconos de terceros que usa Micra (por ejemplo
+Tauri, React, Inter, JetBrains Mono o Lucide) conservan sus propias licencias.
+
+---
+
+Copyright (c) 2026 volo340. All rights reserved.
+
+The Micra source code is published on GitHub so that it can be viewed, but no
+license is granted: without written permission from volo340 you may not copy,
+modify, distribute or use it in other projects, in whole or in part. Viewing
+it and forking it on GitHub remain possible, as GitHub's Terms of Service
+provide.
+
+The installers published at https://github.com/volo340/Micra/releases may be
+downloaded and installed free of charge to use Micra.
+
+Third-party libraries, fonts and icons used by Micra (such as Tauri, React,
+Inter, JetBrains Mono and Lucide) keep their own licenses.
