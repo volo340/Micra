@@ -28,8 +28,10 @@ pizarra de las caras del bloque son las superficies. Todos están en
 | `--text`, `--text-2`, `--text-3` | `#e9eef5`, `#a7b2c2`, `#6e7a8c` | Texto principal, secundario y discreto |
 | `--warning` | `#f5b13d` | Avisos de la consola, servidor arrancando |
 | `--critical` | `#f0565a` | Errores, servidor detenido por un fallo |
-| `--series-cpu` | `#3987e5` | Gráfica de CPU |
-| `--series-ram` | `#d55181` | Gráfica de memoria |
+| `--series-cpu` | `#3987e5` | Gráficas de CPU |
+| `--series-ram` | `#d55181` | Gráficas de memoria |
+| `--series-players` | `#9085e9` | Gráfica de jugadores |
+| `--series-tps` | `#199e70` | Gráfica de TPS |
 
 Micra solo tiene tema oscuro.
 
@@ -44,11 +46,17 @@ Micra solo tiene tema oscuro.
 
 - Un estado nunca se indica solo con color: siempre lleva un icono, un punto
   o un texto ("En línea", "Iniciando…", "Se detuvo con un error").
-- Los dos colores de las gráficas se distinguen también con daltonismo
+- Los cuatro colores de las gráficas se distinguen también con daltonismo
   (deuteranopia, protanopia y tritanopia) y contrastan con las tarjetas. El
   texto nunca usa el color de una gráfica.
+- Cada gráfica muestra una sola medida, con su título y un resumen en texto
+  ("Media 41 % · Máximo 71 %"). Nunca hay dos escalas en la misma gráfica.
 - Las gráficas son líneas finas de 2 px con un área suave debajo; al pasar
-  el ratón muestran el valor y hace cuántos segundos se midió.
+  el ratón muestran el valor y cuándo se midió. Los huecos (servidor
+  apagado) se dejan en blanco en vez de unir los puntos.
+- Los textos de la interfaz salen de `src/i18n/`; ningún componente escribe
+  frases sueltas. Las cifras, fechas y tamaños siguen el idioma elegido
+  (`src/lib/format.ts`).
 - Con "reducir movimiento" activado en el sistema, la app no anima nada.
 
 ## Probar la interfaz sin compilar la app
@@ -56,7 +64,14 @@ Micra solo tiene tema oscuro.
 `npm run dev` abre la interfaz en el navegador (http://localhost:1420) con un
 backend simulado (`src/dev/mock.ts`), sin Rust ni Tauri:
 
-- `http://localhost:1420/?state=running`: un servidor encendido con jugadores.
-- `http://localhost:1420/?state=empty`: la primera vez, sin servidores.
+- `?state=running`: un servidor encendido con jugadores y alguien que
+  intenta entrar sin estar en la lista blanca.
+- `?state=empty`: la primera vez, sin servidores.
+- `?lang=en` (o `pt`, `fr`, `de`): el idioma del sistema simulado.
+- `?platform=windows`: los textos y opciones de Windows.
+- `?update=1`: hay una versión nueva de Micra.
+- `?malware=1`: el análisis de mods encuentra malware.
+
+Se pueden combinar: `http://localhost:1420/?state=running&lang=de&update=1`.
 
 El simulador solo existe en desarrollo; no se incluye en los instaladores.

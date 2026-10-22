@@ -40,22 +40,27 @@ aislado en un crate sin Tauri (`micra-core`) que se prueba con `cargo test`.
 
 ```
 ┌──────────────────────────── Ventana (WebView) ───────────────────────────┐
-│  React + TS: asistente de creación, buscador, panel (consola, CPU/RAM,   │
-│  jugadores), ajustes                                                     │
+│  React + TS en 5 idiomas: asistente, panel (consola, CPU/RAM/TPS,        │
+│  jugadores), jugadores, copias, mods, estadísticas, ajustes              │
 └───────────────▲──────────────────────────────────────┬───────────────────┘
-                │ eventos: server://event,              │ invoke("start_server", …)
-                │ server://stats, provision://progress  │
+                │ eventos: server://event, server://   │ invoke("start_server", …)
+                │ stats, server://live, task://progress │
 ┌───────────────┴──────────────────────────────────────▼───────────────────┐
-│ src-tauri (capa fina): comandos, estado global, reenvío de eventos       │
+│ src-tauri: comandos, estado, supervisor de cada servidor en marcha,      │
+│ avisos (escritorio y Discord), agente del túnel, actualizador            │
 └───────────────▲──────────────────────────────────────┬───────────────────┘
                 │                                       │
 ┌───────────────┴──────────────── micra-core ──────────▼───────────────────┐
 │ provision   ─ orquesta el asistente: contenido → Java → loader → EULA    │
+│ import      ─ adopta un servidor que ya existe                           │
 │ providers   ─ mojang · modrinth (+ .mrpack) · curseforge · loaders       │
 │ java        ─ runtimes Temurin aislados (API de Adoptium)                │
-│ server      ─ config · launcher (flags) · affinity · process · monitor   │
-│ download / archive ─ descargas con hash, extracción segura               │
-│ net (fase 2) ─ UPnP/NAT-PMP · túnel (playit.gg)                          │
+│ server      ─ config · launcher · affinity · process · monitor · tps     │
+│               backup · schedule · players · properties · mods · pack     │
+│               stats · map (BlueMap) · ports · guard · sandbox · scan     │
+│ net         ─ UPnP · túnel de playit.gg · comprobación desde internet    │
+│ notify · secrets (llavero) · settings · i18n                             │
+│ download / archive ─ descargas HTTPS con hash, extracción segura         │
 └──────────────────────────────────────────────────────────────────────────┘
                 │ proceso hijo: <runtimes>/java-21/bin/java -Xmx… -jar …
                 ▼
@@ -83,7 +88,13 @@ aislado en un crate sin Tauri (`micra-core`) que se prueba con `cargo test`.
 5. Instala el loader si hace falta (jar de Fabric, o el instalador oficial de
    Forge/NeoForge con `--installServer`) y detecta cómo arrancar (jar o
    `@libraries/.../unix_args.txt`).
-6. Escribe `eula.txt`, `server.properties` (puerto, MOTD) y `micra.json`.
+6. Escribe `eula.txt`, `server.properties` (puerto, MOTD y valores seguros:
+   `online-mode`, lista blanca obligatoria, RCON y query apagados) y
+   `micra.json`.
+
+*Importar* sigue el mismo camino con una carpeta ya existente: la copia a la
+carpeta de servidores (la original no se toca), detecta versión, loader, mods
+y cómo arrancar, y añade su `micra.json`.
 
 ### Flujo "Encender"
 
@@ -94,6 +105,15 @@ el proceso (Windows). `ServerHandle` lee stdout/stderr línea a línea, detecta
 comandos por stdin. *Apagar* envía `stop` y solo mata el proceso si no termina
 a tiempo. Al cerrar la app se apagan todos los servidores de forma ordenada.
 
+Antes de arrancar, el supervisor (`src-tauri/src/supervisor.rs`) comprueba que
+el puerto esté libre y haya RAM suficiente, deja `server.properties` al día y
+analiza los mods en busca de malware conocido; si encuentra algo, no arranca.
+El proceso se lanza con permisos mínimos (Landlock en Linux, Job Object en
+Windows). Mientras funciona, el supervisor mide CPU, RAM y TPS, guarda un
+punto de estadísticas por minuto, bloquea IPs que fallan demasiados intentos,
+hace las copias automáticas y los reinicios programados, mantiene abierto el
+puerto (UPnP) o el túnel, y avisa en el escritorio o en Discord.
+
 ## 3. Estructura de carpetas
 
 ```
@@ -102,44 +122,60 @@ Micra/
 ├─ package.json, vite.config.ts  frontend (Vite + React + TS)
 ├─ index.html
 ├─ app-icon.svg                  logo original (npx tauri icon genera los iconos)
-├─ .github/workflows/build.yml   compila los instaladores en la nube
+├─ .github/workflows/build.yml   compila, firma y publica los instaladores
 ├─ scripts/install.sh            instalador de Linux (micra-install.sh)
 ├─ docs/ARCHITECTURE.md          este documento
 ├─ docs/DESIGN.md                logo, colores y reglas de la interfaz
-├─ docs/DEVELOPMENT.md           compilar, probar y publicar versiones
+├─ docs/DEVELOPMENT.md           compilar, probar, secretos y publicar versiones
 ├─ crates/micra-core/            lógica de negocio, sin Tauri, con tests
 │  ├─ src/
-│  │  ├─ lib.rs, error.rs, paths.rs, http.rs, hardware.rs, net.rs
+│  │  ├─ lib.rs, error.rs, paths.rs, http.rs, hardware.rs, fsutil.rs
+│  │  ├─ i18n.rs                 idioma de errores y avisos
+│  │  ├─ settings.rs, secrets.rs ajustes de la app y llavero del sistema
+│  │  ├─ notify.rs               textos de los avisos y webhook de Discord
 │  │  ├─ download.rs             descargas en streaming + SHA-1/256/512
 │  │  ├─ archive.rs              ZIP / tar.gz con protección zip-slip
 │  │  ├─ provision.rs            orquestación del asistente
-│  │  ├─ java/
-│  │  │  ├─ mod.rs               JavaManager, heurística de versión
-│  │  │  └─ adoptium.rs          API de Eclipse Temurin
-│  │  ├─ providers/
-│  │  │  ├─ mojang.rs            manifiesto oficial de versiones
-│  │  │  ├─ modrinth.rs          búsqueda y versiones (API v2)
-│  │  │  ├─ mrpack.rs            instalación de .mrpack en modo servidor
-│  │  │  ├─ curseforge.rs        búsqueda, archivos, server packs
-│  │  │  └─ loaders.rs           Vanilla, Fabric, Forge, NeoForge
+│  │  ├─ import.rs               importar un servidor existente
+│  │  ├─ java/                   JavaManager y API de Eclipse Temurin
+│  │  ├─ providers/              mojang, modrinth, mrpack, curseforge, loaders
+│  │  ├─ net/                    IP local, upnp.rs, playit.rs
 │  │  └─ server/
 │  │     ├─ config.rs            micra.json + validación
 │  │     ├─ launcher.rs          argumentos de la JVM
 │  │     ├─ affinity.rs          afinidad de CPU (Linux / Windows)
 │  │     ├─ process.rs           proceso vivo: consola, comandos, jugadores
-│  │     ├─ monitor.rs           CPU/RAM del proceso
+│  │     ├─ monitor.rs, tps.rs   CPU/RAM del proceso y TPS del servidor
+│  │     ├─ stats.rs             histórico (CSV por día, 31 días)
+│  │     ├─ backup.rs            copias en ZIP y restauración
+│  │     ├─ schedule.rs          reinicios programados y apagado sin jugadores
+│  │     ├─ players.rs           lista blanca, ops, baneos
+│  │     ├─ properties.rs        server.properties: lectura, validación, escritura
+│  │     ├─ mods.rs, pack.rs     mods de Modrinth y actualización de modpacks
+│  │     ├─ map.rs               BlueMap
+│  │     ├─ ports.rs, version.rs
+│  │     ├─ guard.rs             bloqueo de IPs y límite por IP
+│  │     ├─ sandbox/             Landlock (Linux) y Job Object (Windows)
+│  │     ├─ scan.rs              malware conocido en los .jar
 │  │     ├─ detect.rs            detectar jar / args file
-│  │     ├─ eula.rs, properties.rs
+│  │     └─ eula.rs
 │  └─ tests/process_lifecycle.rs
 ├─ src-tauri/                    capa de escritorio
 │  ├─ tauri.conf.json, capabilities/, icons/
-│  └─ src/ main.rs, state.rs, commands.rs
+│  └─ src/
+│     ├─ main.rs, state.rs, events.rs
+│     ├─ supervisor.rs           arranque y vigilancia de cada servidor
+│     ├─ notifier.rs, tunnel.rs  avisos y agente de playit.gg
+│     └─ commands/               app, servers, content, import, players,
+│                                properties, backups, mods, map, network, stats
 └─ src/                          interfaz
    ├─ main.tsx, App.tsx
    ├─ assets/logo.svg            el logo sin fondo
+   ├─ i18n/                      es (referencia), en, pt, fr, de
    ├─ styles/                    tokens.css (colores, tipografía), base, componentes, vistas
-   ├─ components/                barra lateral, métricas, consola, jugadores, avisos
-   ├─ views/                     inicio, panel, ajustes y el asistente (wizard/)
+   ├─ components/                barra lateral, métricas, consola, gráficas, diálogos
+   ├─ views/                     inicio, ajustes, asistente (wizard/) y las
+   │                             pestañas de cada servidor (server/)
    ├─ lib/                       api.ts, types.ts, useAppData.ts, logs.ts, format.ts
    └─ dev/mock.ts                backend simulado para `npm run dev` en el navegador
 ```
@@ -151,6 +187,10 @@ Linux:   ~/.local/share/micra/
 Windows: %APPDATA%\Micra\Micra\data\
   ├─ runtimes/java-8, java-17, java-21, …
   ├─ servers/<id>/  (mundo, mods, micra.json, eula.txt, server.properties)
+  ├─ backups/<id>/  (copias en ZIP)
+  ├─ stats/<id>/    (un CSV por día)
+  ├─ tools/         (agente de playit.gg)
+  ├─ settings.json  (idioma, avisos, actualizaciones)
   └─ cache/         (descargas temporales)
 ```
 
@@ -161,10 +201,22 @@ Windows: %APPDATA%\Micra\Micra\data\
   `eulaAccepted: true`. Es "automático" en el sentido de que nadie edita
   archivos.
 - **API key de CurseForge**: la API exige clave (gratis en
-  console.curseforge.com). Se lee de `MICRA_CURSEFORGE_API_KEY` en ejecución
-  o al compilar. Si la app se distribuye públicamente, conviene un pequeño
-  proxy propio para no incrustar la clave en el binario. Algunos autores
-  bloquean la descarga por terceros: la app lo detecta y lo explica.
+  console.curseforge.com). La persona puede ponerla en Ajustes (se guarda en
+  el llavero) o se lee de `MICRA_CURSEFORGE_API_KEY` en ejecución o al
+  compilar. Si la app se distribuye públicamente, conviene un pequeño proxy
+  propio para no incrustar la clave en el binario. Algunos autores bloquean
+  la descarga por terceros: la app lo detecta y lo explica.
+- **Seguro por defecto**: todo servidor nace con `online-mode` y lista blanca
+  obligatoria; si la persona los quita, el panel lo avisa. RCON y query
+  quedan apagados (Micra usa la consola); si se activa RCON, Micra le pone una
+  contraseña de 32 caracteres y nunca abre su puerto. UPnP y el túnel están
+  apagados hasta que la persona los activa.
+- **Secretos** (webhook de Discord, clave de CurseForge, clave del agente de
+  playit.gg) en el llavero del sistema; sin llavero, en un archivo que solo
+  lee el usuario.
+- **El escáner de malware no es un antivirus**: busca indicadores concretos
+  de familias conocidas (fractureiser y ladrones de cuentas) en las cadenas de
+  las clases, también en jars anidados. Reduce el riesgo; no lo elimina.
 - **Afinidad en Windows**: `SetProcessAffinityMask` cubre el primer grupo de
   64 CPUs lógicas; suficiente para equipos domésticos.
 - **Flags de la JVM**: flags de G1 de Aikar activados por defecto
@@ -189,40 +241,54 @@ artefactos de Actions o con el repositorio privado) y, si no hay, descarga la
 release de GitHub. En distribuciones sin FUSE 2, el lanzador del AppImage
 activa `APPIMAGE_EXTRACT_AND_RUN` para que arranque igual.
 
-Pendiente para una distribución pública:
+Para una distribución pública:
 
-- **Firma de código en Windows**: sin certificado, SmartScreen muestra
-  "Windows protegió su PC" la primera vez (se abre con *Más información* >
-  *Ejecutar de todas formas*). Se quita firmando el `.exe` en el flujo de
-  Actions.
+- **Firma de código en Windows**: el flujo de Actions firma el `.exe` si
+  tiene un certificado (`.pfx` o Azure Trusted Signing; ver
+  [DEVELOPMENT.md](DEVELOPMENT.md#firma-del-exe-en-windows)). Sin él,
+  SmartScreen muestra "Windows protegió su PC" la primera vez (se abre con
+  *Más información* > *Ejecutar de todas formas*).
+- **Actualizaciones automáticas** con `tauri-plugin-updater`: cada versión
+  publica un `latest.json` con los paquetes firmados con la clave de Micra.
+  Se instalan solas en Windows y con el AppImage; con `.deb`/`.rpm` la app
+  avisa y basta con volver a ejecutar `micra-install.sh`.
 - **Repositorio público** (o releases en otro sitio): con el repositorio
-  privado nadie más puede descargar los instaladores.
-- **Actualizaciones automáticas** con `tauri-plugin-updater`.
+  privado nadie más puede descargar los instaladores ni las actualizaciones.
 
-## 6. Redes (fase 2)
+## 6. Redes
 
-1. **UPnP / NAT-PMP** con el crate `igd-next`: descubrir el gateway, abrir
-   TCP 25565 (o el puerto elegido) con lease renovable, cerrarlo al apagar, y
-   mostrar la IP pública.
+1. **UPnP** con el crate `igd-next`: abre solo el puerto TCP del juego con
+   una concesión de una hora que se renueva mientras el servidor está
+   encendido, lo cierra al apagar y muestra la IP pública.
 2. **Detección de CGNAT**: si la IP WAN que da el router es privada
-   (100.64.0.0/10, 10/8…) o no coincide con la IP pública, UPnP no sirve.
-3. **Túnel** como alternativa: integrar el agente de playit.gg (código
-   abierto, en Rust) como proceso gestionado, que da una dirección del tipo
-   `nombre.joinmc.link`. Los nombres personalizados dependen del plan de
-   playit; con el plan gratuito la dirección se asigna automáticamente.
-4. **Firewall de Windows**: la primera vez que Java abre el puerto, Windows
-   pregunta si permitirlo. La app puede añadir la regla por adelantado
-   (`netsh advfirewall`, requiere confirmar como administrador una vez).
+   (100.64.0.0/10, 10/8…), abrir el puerto no sirve y la interfaz propone el
+   túnel.
+3. **Túnel de playit.gg**: Micra vincula la cuenta (código que se acepta en
+   el navegador), crea un túnel `minecraft-java` por servidor y ejecuta el
+   agente oficial, descargado de sus releases y comprobado con SHA-256. Da
+   direcciones del tipo `nombre.joinmc.link`.
+4. **Comprobar**: se pregunta a mcstatus.io si el servidor responde en la
+   dirección pública, para confirmar que se puede entrar desde internet.
+5. **Pendiente: firewall de Windows**. La primera vez que Java abre el
+   puerto, Windows pregunta si permitirlo. La app podría añadir la regla por
+   adelantado (`netsh advfirewall`, requiere confirmar como administrador
+   una vez).
 
 ## 7. Hoja de ruta
 
 1. ✅ Núcleo: Java, proveedores, lanzamiento, consola, CPU/RAM.
 2. ✅ Instaladores: `.exe` (Windows), `micra-install.sh` (Linux) y compilación en GitHub Actions.
 3. ✅ Interfaz: logo, panel en tiempo real, asistente de creación y buscador de Modrinth/CurseForge.
-4. Redes: UPnP, túnel y regla de firewall.
-5. Copias de seguridad del mundo, programación de reinicios, editor de
-   `server.properties`, gestor de mods y plugins.
-6. Firma de código y actualizaciones automáticas (`tauri-plugin-updater`).
+4. ✅ Redes: UPnP, detección de CGNAT y túnel de playit.gg.
+5. ✅ Copias de seguridad, reinicios programados, editor de `server.properties`,
+   jugadores, mods y actualizaciones de modpacks, importar servidores, BlueMap,
+   avisos, estadísticas y cinco idiomas.
+6. ✅ Seguridad: valores seguros por defecto, RCON protegido, bloqueo de IPs,
+   permisos mínimos, análisis de malware y secretos en el llavero.
+7. ✅ Firma de código (con el certificado de quien publica) y actualizaciones
+   automáticas.
+8. Regla del firewall de Windows.
+9. Control desde el móvil.
 
 ## Desarrollo
 
