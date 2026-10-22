@@ -1,170 +1,132 @@
-import { useEffect, useRef, useState } from "react";
-import { api, onServerEvent, onServerStats } from "./lib/api";
-import type { ServerStatsPayload, ServerStatus, ServerSummary } from "./lib/types";
-
-const MAX_LINES = 2000;
-
-const STATUS_LABEL: Record<ServerStatus, string> = {
-  starting: "Iniciando",
-  running: "En línea",
-  stopping: "Deteniendo",
-  stopped: "Apagado",
-  crashed: "Se cerró con error",
-};
+import { useCallback, useEffect, useRef, useState } from "react";
+import { Logo } from "./components/Logo";
+import { Sidebar, type View } from "./components/Sidebar";
+import { ToastProvider, useToast } from "./components/Toasts";
+import { api, errorMessage } from "./lib/api";
+import { useAppData } from "./lib/useAppData";
+import type { ServerConfig } from "./lib/types";
+import { Dashboard } from "./views/Dashboard";
+import { Home } from "./views/Home";
+import { Settings } from "./views/Settings";
+import { Wizard } from "./views/wizard/Wizard";
 
 export default function App() {
-  const [servers, setServers] = useState<ServerSummary[]>([]);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [logs, setLogs] = useState<Record<string, string[]>>({});
-  const [stats, setStats] = useState<Record<string, ServerStatsPayload>>({});
-  const [error, setError] = useState<string | null>(null);
-
-  const refresh = () =>
-    api
-      .listServers()
-      .then((list) => {
-        setServers(list);
-        setSelectedId((id) => id ?? list[0]?.config.id ?? null);
-      })
-      .catch((e) => setError(String(e)));
-
-  useEffect(() => {
-    refresh();
-    const unlisten = [
-      onServerEvent(({ serverId, event }) => {
-        if (event.type === "log") {
-          setLogs((prev) => {
-            const lines = [...(prev[serverId] ?? []), event.line];
-            return { ...prev, [serverId]: lines.slice(-MAX_LINES) };
-          });
-        } else {
-          refresh();
-        }
-      }),
-      onServerStats((p) => setStats((prev) => ({ ...prev, [p.serverId]: p }))),
-    ];
-    return () => unlisten.forEach((p) => p.then((off) => off()));
-  }, []);
-
-  const selected = servers.find((s) => s.config.id === selectedId) ?? null;
-
   return (
-    <div className="layout">
-      <aside className="sidebar">
-        <h1 className="brand">Micra</h1>
-        <button className="primary" onClick={() => alert("El asistente de creación llega en la siguiente fase")}>
-          + Nuevo servidor
-        </button>
-        <nav>
-          {servers.map((s) => (
-            <button
-              key={s.config.id}
-              className={`server-item ${s.config.id === selectedId ? "active" : ""}`}
-              onClick={() => setSelectedId(s.config.id)}
-            >
-              <span className={`dot ${s.status}`} />
-              {s.config.name}
-            </button>
-          ))}
-          {servers.length === 0 && <p className="muted">Todavía no hay servidores.</p>}
-        </nav>
-      </aside>
-
-      <main className="content">
-        {error && <div className="error" onClick={() => setError(null)}>{error}</div>}
-        {selected ? (
-          <Dashboard
-            server={selected}
-            lines={logs[selected.config.id] ?? []}
-            stats={stats[selected.config.id]}
-            onError={(e) => setError(String(e))}
-          />
-        ) : (
-          <div className="empty">Crea tu primer servidor para empezar.</div>
-        )}
-      </main>
-    </div>
+    <ToastProvider>
+      <Shell />
+    </ToastProvider>
   );
 }
 
-function Dashboard(props: {
-  server: ServerSummary;
-  lines: string[];
-  stats?: ServerStatsPayload;
-  onError: (e: unknown) => void;
-}) {
-  const { server, lines, stats, onError } = props;
-  const { config, status, players } = server;
-  const alive = status === "starting" || status === "running" || status === "stopping";
-  const [command, setCommand] = useState("");
-  const consoleRef = useRef<HTMLPreElement>(null);
+function Shell() {
+  const toast = useToast();
+  const data = useAppData(toast);
+  const [view, setView] = useState<View>({ kind: "home" });
+  const [busy, setBusy] = useState<Record<string, boolean>>({});
+  const autoSelected = useRef(false);
 
+  const onError = useCallback(
+    (e: unknown) => toast({ tone: "error", title: "Algo ha fallado", message: errorMessage(e) }),
+    [toast],
+  );
+
+  // Al abrir la app con servidores ya creados, mostrar directamente el primero.
   useEffect(() => {
-    consoleRef.current?.scrollTo({ top: consoleRef.current.scrollHeight });
-  }, [lines.length]);
+    if (!autoSelected.current && data.servers?.length) {
+      autoSelected.current = true;
+      setView((v) => (v.kind === "home" ? { kind: "server", id: data.servers![0].config.id } : v));
+    }
+  }, [data.servers]);
 
-  const toggle = () =>
-    (alive ? api.stopServer(config.id) : api.startServer(config.id)).catch(onError);
-
-  const submit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!command.trim()) return;
-    api.sendCommand(config.id, command).catch(onError);
-    setCommand("");
+  const run = async (id: string, action: () => Promise<void>) => {
+    setBusy((b) => ({ ...b, [id]: true }));
+    try {
+      await action();
+    } catch (e) {
+      onError(e);
+      data.refresh();
+    } finally {
+      setBusy((b) => ({ ...b, [id]: false }));
+    }
   };
 
-  return (
-    <section className="dashboard">
-      <header className="dash-header">
-        <div>
-          <h2>{config.name}</h2>
-          <p className="muted">
-            Minecraft {config.mcVersion} · {config.loader.kind} · Java {config.javaMajor} · puerto {config.port}
-          </p>
-        </div>
-        <div className="actions">
-          <span className={`badge ${status}`}>{STATUS_LABEL[status]}</span>
-          <button className={alive ? "danger" : "primary"} onClick={toggle} disabled={status === "stopping"}>
-            {alive ? "Apagar" : "Encender"}
-          </button>
-        </div>
-      </header>
+  const start = (id: string) =>
+    run(id, async () => {
+      data.resetStats(id);
+      data.patch(id, (s) => ({ ...s, status: "starting" }));
+      await api.startServer(id);
+    });
 
-      <div className="tiles">
-        <Tile label="CPU" value={stats ? `${stats.sample.cpuPercent.toFixed(0)} %` : "—"} />
-        <Tile
-          label="RAM"
-          value={stats ? `${(stats.sample.memoryMb / 1024).toFixed(1)} / ${(config.memory.maxMb / 1024).toFixed(1)} GB` : "—"}
-        />
-        <Tile label="Jugadores" value={String(players.length)} />
+  const stop = (id: string) => run(id, () => api.stopServer(id));
+
+  const restart = (id: string) =>
+    run(id, async () => {
+      await api.stopServer(id);
+      data.resetStats(id);
+      data.patch(id, (s) => ({ ...s, status: "starting" }));
+      await api.startServer(id);
+    });
+
+  const command = (id: string, cmd: string) => {
+    data.echoCommand(id, cmd);
+    api.sendCommand(id, cmd).catch(onError);
+  };
+
+  const onCreated = async (config: ServerConfig, startNow: boolean) => {
+    await data.refresh();
+    setView({ kind: "server", id: config.id });
+    toast({ tone: "success", title: "Servidor creado", message: `«${config.name}» ya aparece en tu lista.` });
+    if (startNow) start(config.id);
+  };
+
+  if (data.servers === null) {
+    return (
+      <div className="splash">
+        <Logo size={72} className="splash-logo" />
       </div>
+    );
+  }
 
-      <div className="panels">
-        <div className="console">
-          <pre ref={consoleRef}>{lines.join("\n")}</pre>
-          <form onSubmit={submit}>
-            <input
-              value={command}
-              onChange={(e) => setCommand(e.target.value)}
-              placeholder={alive ? "Escribe un comando (p. ej. say hola)" : "El servidor está apagado"}
-              disabled={!alive}
-            />
-          </form>
-        </div>
-        <div className="players">
-          <h3>Conectados</h3>
-          {players.length ? players.map((p) => <div key={p}>{p}</div>) : <p className="muted">Nadie por ahora.</p>}
-        </div>
-      </div>
-    </section>
-  );
-}
+  const selected = view.kind === "server" ? data.servers.find((s) => s.config.id === view.id) : undefined;
 
-function Tile({ label, value }: { label: string; value: string }) {
+  let content;
+  if (view.kind === "create") {
+    content = (
+      <Wizard
+        hardware={data.hardware}
+        appInfo={data.appInfo}
+        onCancel={() => setView(selected ? view : { kind: "home" })}
+        onCreated={onCreated}
+      />
+    );
+  } else if (view.kind === "settings") {
+    content = <Settings hardware={data.hardware} appInfo={data.appInfo} onError={onError} />;
+  } else if (selected) {
+    const id = selected.config.id;
+    content = (
+      <Dashboard
+        server={selected}
+        lines={data.logs[id] ?? []}
+        points={data.stats[id] ?? []}
+        hardware={data.hardware}
+        network={data.network}
+        busy={Boolean(busy[id])}
+        onStart={() => start(id)}
+        onStop={() => stop(id)}
+        onRestart={() => restart(id)}
+        onCommand={(cmd) => command(id, cmd)}
+        onClear={() => data.clearLogs(id)}
+        onOpenFolder={() => api.openServerFolder(id).catch(onError)}
+      />
+    );
+  } else {
+    content = <Home onCreate={() => setView({ kind: "create" })} hasServers={data.servers.length > 0} />;
+  }
+
   return (
-    <div className="tile">
-      <span className="muted">{label}</span>
-      <strong>{value}</strong>
+    <div className="app">
+      <Sidebar servers={data.servers} view={view} hardware={data.hardware} onNavigate={setView} />
+      <main className="main">{content}</main>
     </div>
   );
 }

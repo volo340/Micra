@@ -101,13 +101,14 @@ Micra/
 ├─ Cargo.toml                    workspace de Rust
 ├─ package.json, vite.config.ts  frontend (Vite + React + TS)
 ├─ index.html
-├─ app-icon.png                  icono original (npx tauri icon lo convierte)
+├─ app-icon.svg                  logo original (npx tauri icon genera los iconos)
 ├─ .github/workflows/build.yml   compila los instaladores en la nube
 ├─ scripts/install.sh            instalador de Linux (micra-install.sh)
 ├─ docs/ARCHITECTURE.md          este documento
+├─ docs/DESIGN.md                logo, colores y reglas de la interfaz
 ├─ crates/micra-core/            lógica de negocio, sin Tauri, con tests
 │  ├─ src/
-│  │  ├─ lib.rs, error.rs, paths.rs, http.rs, hardware.rs
+│  │  ├─ lib.rs, error.rs, paths.rs, http.rs, hardware.rs, net.rs
 │  │  ├─ download.rs             descargas en streaming + SHA-1/256/512
 │  │  ├─ archive.rs              ZIP / tar.gz con protección zip-slip
 │  │  ├─ provision.rs            orquestación del asistente
@@ -133,8 +134,13 @@ Micra/
 │  ├─ tauri.conf.json, capabilities/, icons/
 │  └─ src/ main.rs, state.rs, commands.rs
 └─ src/                          interfaz
-   ├─ main.tsx, App.tsx, styles.css
-   └─ lib/ api.ts, types.ts
+   ├─ main.tsx, App.tsx
+   ├─ assets/logo.svg            el logo sin fondo
+   ├─ styles/                    tokens.css (colores, tipografía), base, componentes, vistas
+   ├─ components/                barra lateral, métricas, consola, jugadores, avisos
+   ├─ views/                     inicio, panel, ajustes y el asistente (wizard/)
+   ├─ lib/                       api.ts, types.ts, useAppData.ts, logs.ts, format.ts
+   └─ dev/mock.ts                backend simulado para `npm run dev` en el navegador
 ```
 
 Datos del usuario (fuera del repo):
@@ -211,7 +217,7 @@ Pendiente para una distribución pública:
 
 1. ✅ Núcleo: Java, proveedores, lanzamiento, consola, CPU/RAM.
 2. ✅ Instaladores: `.exe` (Windows), `micra-install.sh` (Linux) y compilación en GitHub Actions.
-3. Asistente de creación en la interfaz y buscador de Modrinth/CurseForge.
+3. ✅ Interfaz: logo, panel en tiempo real, asistente de creación y buscador de Modrinth/CurseForge.
 4. Redes: UPnP, túnel y regla de firewall.
 5. Copias de seguridad del mundo, programación de reinicios, editor de
    `server.properties`, gestor de mods y plugins.

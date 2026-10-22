@@ -40,7 +40,7 @@ pub fn build_args(cfg: &ServerConfig) -> Vec<String> {
     }
     // Consola sin códigos de color/JLine: la leemos por tubería.
     args.push("-Dterminal.jline=false".into());
-    args.push("-Dterminal.ansi=true".into());
+    args.push("-Dterminal.ansi=false".into());
     args.extend(cfg.extra_jvm_args.iter().cloned());
     match &cfg.launch {
         LaunchTarget::Jar { path } => {

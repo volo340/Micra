@@ -1,8 +1,12 @@
+<p align="center"><img src="app-icon.svg" width="96" alt="Logo de Micra" /></p>
+
 # Micra
 
 Convierte tu PC (Windows o Linux) en un servidor de Minecraft sin escribir
 código ni configurar el router: modpacks de Modrinth y CurseForge, Java
 gestionado automáticamente, asistente de RAM/CPU y panel en tiempo real.
+
+![Panel de Micra con un servidor encendido](docs/img/panel.png)
 
 ## Instalar
 
@@ -38,7 +42,8 @@ Actions y ejecuta `bash micra-install.sh` en esa misma carpeta.
 ## Desarrollo
 
 Hecho con Tauri 2 + Rust + React/TypeScript. La arquitectura está en
-[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) y el diseño (logo, colores y
+reglas de la interfaz) en [docs/DESIGN.md](docs/DESIGN.md).
 
 Requisitos solo para desarrollar: Rust estable, Node 20+ y, en Linux, las
 dependencias de Tauri (`libwebkit2gtk-4.1-dev`, `librsvg2-dev`,
@@ -47,6 +52,7 @@ dependencias de Tauri (`libwebkit2gtk-4.1-dev`, `librsvg2-dev`,
 ```bash
 npm install
 npm run tauri dev           # la app con recarga en caliente
+npm run dev                 # solo la interfaz, en el navegador y con datos simulados
 cargo test -p micra-core    # tests del núcleo
 ```
 
