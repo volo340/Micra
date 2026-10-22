@@ -2,7 +2,8 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::{Error, Result};
+use crate::fsutil::write_atomic;
+use crate::{tr, Error, Result};
 
 pub const CONFIG_FILE: &str = "micra.json";
 
@@ -69,10 +70,163 @@ pub struct ServerConfig {
     pub use_aikar_flags: bool,
     #[serde(default)]
     pub extra_jvm_args: Vec<String>,
+    #[serde(default)]
+    pub backups: BackupPolicy,
+    #[serde(default)]
+    pub schedule: SchedulePolicy,
+    #[serde(default)]
+    pub network: NetworkPolicy,
+    #[serde(default)]
+    pub security: SecurityPolicy,
+    #[serde(default)]
+    pub map: MapConfig,
+    /// De qué modpack sale el servidor, para poder actualizarlo.
+    #[serde(default)]
+    pub source: Option<ContentSource>,
+    /// Jugador que se añade a la lista blanca y como operador la primera vez
+    /// que el servidor arranca (lo pide el asistente).
+    #[serde(default)]
+    pub pending_owner: Option<String>,
 }
 
 fn default_true() -> bool {
     true
+}
+
+/// Copias automáticas mientras el servidor está encendido.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct BackupPolicy {
+    pub enabled: bool,
+    pub interval_hours: u32,
+    /// Copias automáticas que se guardan; las más antiguas se borran.
+    pub keep: u32,
+}
+
+impl Default for BackupPolicy {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            interval_hours: 6,
+            keep: 10,
+        }
+    }
+}
+
+/// Reinicios programados y apagado por inactividad.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct SchedulePolicy {
+    /// Hora local "HH:MM" del reinicio diario.
+    pub daily_restart: Option<String>,
+    /// Reiniciar cada N horas de funcionamiento.
+    pub restart_every_hours: Option<u32>,
+    /// Apagar si no hay nadie conectado durante N minutos.
+    pub idle_shutdown_minutes: Option<u32>,
+}
+
+/// Cómo llegan los jugadores de fuera de la red local. Todo desactivado por
+/// defecto: abrir el servidor a internet es decisión de la persona.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct NetworkPolicy {
+    /// Abrir el puerto del juego en el router con UPnP.
+    pub upnp: bool,
+    /// Túnel de playit.gg (para conexiones con CGNAT).
+    pub tunnel: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct SecurityPolicy {
+    pub guard: GuardPolicy,
+    /// Ejecutar el servidor con permisos mínimos (ver `server::sandbox`).
+    pub sandbox: bool,
+    /// Windows: además, nivel de integridad bajo (experimental).
+    pub low_integrity: bool,
+}
+
+impl Default for SecurityPolicy {
+    fn default() -> Self {
+        Self {
+            guard: GuardPolicy::default(),
+            sandbox: true,
+            low_integrity: false,
+        }
+    }
+}
+
+/// Bloqueo automático de IPs que intentan entrar demasiadas veces.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct GuardPolicy {
+    pub enabled: bool,
+    /// Intentos fallidos permitidos por IP dentro de la ventana.
+    pub max_attempts: u32,
+    pub window_secs: u32,
+    /// Duración del bloqueo; 0 = permanente.
+    pub ban_minutes: u32,
+}
+
+impl Default for GuardPolicy {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            max_attempts: 8,
+            window_secs: 60,
+            ban_minutes: 60,
+        }
+    }
+}
+
+/// Mapa web con BlueMap.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct MapConfig {
+    pub enabled: bool,
+    pub port: u16,
+    /// La persona aceptó que BlueMap descargue los recursos del juego.
+    pub accepted_download: bool,
+}
+
+impl Default for MapConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            port: 8100,
+            accepted_download: false,
+        }
+    }
+}
+
+/// Origen del contenido instalado, para buscar y aplicar actualizaciones.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum ContentSource {
+    #[serde(rename_all = "camelCase")]
+    Modrinth {
+        project_id: String,
+        version_id: String,
+    },
+    #[serde(rename_all = "camelCase")]
+    CurseForge { mod_id: u64, file_id: u64 },
+}
+
+impl Loader {
+    /// Nombre del loader en las APIs de Modrinth (`None` para vanilla).
+    pub fn modrinth_name(&self) -> Option<&'static str> {
+        match self {
+            Loader::Vanilla => None,
+            Loader::Fabric { .. } => Some("fabric"),
+            Loader::Quilt { .. } => Some("quilt"),
+            Loader::Forge { .. } => Some("forge"),
+            Loader::NeoForge { .. } => Some("neoforge"),
+        }
+    }
+
+    pub fn supports_mods(&self) -> bool {
+        !matches!(self, Loader::Vanilla)
+    }
 }
 
 impl ServerConfig {
@@ -92,12 +246,53 @@ impl ServerConfig {
     }
 
     pub async fn save(&self, server_dir: &Path) -> Result<()> {
-        tokio::fs::create_dir_all(server_dir).await?;
-        tokio::fs::write(
-            server_dir.join(CONFIG_FILE),
-            serde_json::to_vec_pretty(self)?,
+        write_atomic(
+            &server_dir.join(CONFIG_FILE),
+            &serde_json::to_vec_pretty(self)?,
         )
-        .await?;
+        .await
+    }
+
+    /// Comprueba las políticas que la persona puede editar en Ajustes.
+    pub fn validate_policies(&self) -> Result<()> {
+        if let Some(time) = &self.schedule.daily_restart {
+            if crate::server::schedule::parse_hhmm(time).is_none() {
+                return Err(Error::InvalidConfig(tr!(
+                    "la hora del reinicio diario debe tener el formato HH:MM",
+                    "the daily restart time must use the HH:MM format"
+                )));
+            }
+        }
+        if self.schedule.restart_every_hours == Some(0)
+            || self.schedule.idle_shutdown_minutes == Some(0)
+        {
+            return Err(Error::InvalidConfig(tr!(
+                "los intervalos deben ser mayores que cero",
+                "intervals must be greater than zero"
+            )));
+        }
+        if self.backups.enabled && (self.backups.interval_hours == 0 || self.backups.keep == 0) {
+            return Err(Error::InvalidConfig(tr!(
+                "las copias automáticas necesitan un intervalo y un número de copias mayores que cero",
+                "automatic backups need an interval and a number of copies greater than zero"
+            )));
+        }
+        let guard = &self.security.guard;
+        if guard.enabled && (guard.max_attempts < 2 || guard.window_secs < 10) {
+            return Err(Error::InvalidConfig(tr!(
+                "la protección necesita al menos 2 intentos y una ventana de 10 segundos",
+                "the protection needs at least 2 attempts and a 10-second window"
+            )));
+        }
+        if self.map.port < 1024 || self.map.port == self.port {
+            return Err(Error::InvalidConfig(tr!(
+                "el puerto del mapa debe estar entre 1024 y 65535 y ser distinto del del juego",
+                "the map port must be between 1024 and 65535 and differ from the game port"
+            )));
+        }
+        if let Some(owner) = &self.pending_owner {
+            crate::server::players::validate_name(owner)?;
+        }
         Ok(())
     }
 }
@@ -112,35 +307,43 @@ pub fn validate_resources(
     logical_cpus: usize,
 ) -> Result<()> {
     if memory.max_mb < 512 {
-        return Err(Error::InvalidConfig(
-            "la RAM máxima debe ser al menos 512 MB".into(),
-        ));
+        return Err(Error::InvalidConfig(tr!(
+            "la RAM máxima debe ser al menos 512 MB",
+            "the maximum RAM must be at least 512 MB"
+        )));
     }
     if memory.min_mb > memory.max_mb {
-        return Err(Error::InvalidConfig(
-            "la RAM mínima no puede superar a la máxima".into(),
-        ));
+        return Err(Error::InvalidConfig(tr!(
+            "la RAM mínima no puede superar a la máxima",
+            "the minimum RAM cannot exceed the maximum"
+        )));
     }
     if total_memory_mb > 0 && memory.max_mb >= total_memory_mb {
-        return Err(Error::InvalidConfig(format!(
-            "la RAM máxima ({} MB) debe ser menor que la RAM total del equipo ({total_memory_mb} MB)",
-            memory.max_mb
+        let max = memory.max_mb;
+        return Err(Error::InvalidConfig(tr!(
+            "la RAM máxima ({max} MB) debe ser menor que la RAM total del equipo ({total_memory_mb} MB)",
+            "the maximum RAM ({max} MB) must be lower than this computer's total RAM ({total_memory_mb} MB)"
         )));
     }
     if let Some(cores) = &cpu.cores {
         if cores.is_empty() {
-            return Err(Error::InvalidConfig("selecciona al menos un núcleo".into()));
+            return Err(Error::InvalidConfig(tr!(
+                "selecciona al menos un núcleo",
+                "select at least one core"
+            )));
         }
         if let Some(bad) = cores.iter().find(|&&c| c >= logical_cpus) {
-            return Err(Error::InvalidConfig(format!(
-                "el núcleo {bad} no existe (este equipo tiene {logical_cpus})"
+            return Err(Error::InvalidConfig(tr!(
+                "el núcleo {bad} no existe (este equipo tiene {logical_cpus})",
+                "core {bad} does not exist (this computer has {logical_cpus})"
             )));
         }
     }
     if port < 1024 {
-        return Err(Error::InvalidConfig(
-            "usa un puerto entre 1024 y 65535".into(),
-        ));
+        return Err(Error::InvalidConfig(tr!(
+            "usa un puerto entre 1024 y 65535",
+            "use a port between 1024 and 65535"
+        )));
     }
     Ok(())
 }
@@ -188,6 +391,13 @@ mod tests {
             },
             use_aikar_flags: true,
             extra_jvm_args: vec![],
+            backups: BackupPolicy::default(),
+            schedule: SchedulePolicy::default(),
+            network: NetworkPolicy::default(),
+            security: SecurityPolicy::default(),
+            map: MapConfig::default(),
+            source: None,
+            pending_owner: None,
         }
     }
 
@@ -198,6 +408,37 @@ mod tests {
         let mut c = sample();
         c.cpu.cores = Some(vec![9]);
         assert!(c.validate(16384, 8).is_err());
+    }
+
+    #[test]
+    fn policies() {
+        let mut c = sample();
+        assert!(c.validate_policies().is_ok());
+        c.schedule.daily_restart = Some("25:00".into());
+        assert!(c.validate_policies().is_err());
+        c.schedule.daily_restart = Some("04:30".into());
+        c.map.port = c.port;
+        assert!(c.validate_policies().is_err());
+        c.map.port = 8100;
+        c.pending_owner = Some("no válido".into());
+        assert!(c.validate_policies().is_err());
+        c.pending_owner = Some("Steve_01".into());
+        assert!(c.validate_policies().is_ok());
+    }
+
+    /// Un `micra.json` de la versión anterior (sin las políticas nuevas)
+    /// debe seguir cargando con los valores por defecto.
+    #[test]
+    fn loads_old_config() {
+        let old = r#"{"id":"a","name":"A","mcVersion":"1.21.1","loader":{"kind":"vanilla"},
+            "javaMajor":21,"memory":{"minMb":1024,"maxMb":2048},"port":25565,
+            "eulaAccepted":true,"launch":{"kind":"jar","path":"server.jar"}}"#;
+        let cfg: ServerConfig = serde_json::from_str(old).unwrap();
+        assert!(cfg.backups.enabled);
+        assert!(cfg.security.sandbox);
+        assert!(!cfg.network.upnp);
+        assert_eq!(cfg.map.port, 8100);
+        assert_eq!(cfg.source, None);
     }
 
     #[test]

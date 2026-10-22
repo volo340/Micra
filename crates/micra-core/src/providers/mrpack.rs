@@ -7,10 +7,10 @@ use std::path::Path;
 use futures_util::{stream, TryStreamExt};
 use serde::Deserialize;
 
-use crate::archive::{extract_zip_prefix, safe_join};
+use crate::archive::{extract_zip_prefix, list_zip_prefix, safe_join};
 use crate::download::{download_file, ExpectedHash, HashAlgo};
 use crate::server::config::Loader;
-use crate::{Error, Result};
+use crate::{tr, Error, Result};
 
 /// Dominios desde los que la especificación permite descargar archivos.
 const ALLOWED_HOSTS: &[&str] = &[
@@ -56,6 +56,9 @@ pub struct PackInfo {
     pub version: String,
     pub mc_version: String,
     pub loader: Loader,
+    /// Rutas relativas de todo lo que instaló el pack (para poder quitarlo
+    /// al actualizar).
+    pub files: Vec<String>,
 }
 
 /// Progreso: (archivos completados, total de archivos).
@@ -69,18 +72,16 @@ pub async fn install_mrpack(
 ) -> Result<PackInfo> {
     let index = read_index(mrpack).await?;
     if index.game != "minecraft" {
-        return Err(Error::InvalidConfig(format!(
-            "juego no soportado: {}",
-            index.game
+        let game = &index.game;
+        return Err(Error::InvalidConfig(tr!(
+            "juego no soportado: {game}",
+            "unsupported game: {game}"
         )));
     }
 
     // Archivos sueltos: solo los que el servidor necesita.
-    let files: Vec<&MrpackFile> = index
-        .files
-        .iter()
-        .filter(|f| f.env.as_ref().is_none_or(|e| e.server != "unsupported"))
-        .collect();
+    let files: Vec<&MrpackFile> = server_files(&index).collect();
+    let mut installed: Vec<String> = files.iter().map(|f| f.path.replace('\\', "/")).collect();
     let total = files.len();
     let done = std::sync::atomic::AtomicUsize::new(0);
 
@@ -97,7 +98,13 @@ pub async fn install_mrpack(
                 let expected = match (file.hashes.get("sha512"), file.hashes.get("sha1")) {
                     (Some(h), _) => ExpectedHash::new(HashAlgo::Sha512, h),
                     (None, Some(h)) => ExpectedHash::new(HashAlgo::Sha1, h),
-                    _ => return Err(Error::InvalidConfig(format!("{} no tiene hash", file.path))),
+                    _ => {
+                        let path = &file.path;
+                        return Err(Error::InvalidConfig(tr!(
+                            "{path} no tiene hash: no se puede verificar",
+                            "{path} has no hash: it cannot be verified"
+                        )));
+                    }
                 };
                 download_file(http, url, &dest, Some(&expected), None).await?;
                 let n = done.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
@@ -113,24 +120,71 @@ pub async fn install_mrpack(
     // para que tenga prioridad.
     let mrpack_owned = mrpack.to_owned();
     let dir = server_dir.to_owned();
-    tokio::task::spawn_blocking(move || -> Result<()> {
-        extract_zip_prefix(&mrpack_owned, "overrides/", &dir)?;
-        extract_zip_prefix(&mrpack_owned, "server-overrides/", &dir)?;
-        Ok(())
+    let overrides = tokio::task::spawn_blocking(move || -> Result<Vec<String>> {
+        let mut written = extract_zip_prefix(&mrpack_owned, "overrides/", &dir)?;
+        written.extend(extract_zip_prefix(
+            &mrpack_owned,
+            "server-overrides/",
+            &dir,
+        )?);
+        Ok(written)
     })
     .await
     .expect("la extracción no debería entrar en pánico")?;
+    installed.extend(overrides);
+    installed.sort();
+    installed.dedup();
 
-    let mc_version = index
-        .dependencies
-        .get("minecraft")
-        .cloned()
-        .ok_or_else(|| Error::InvalidConfig("el pack no declara versión de Minecraft".into()))?;
+    let mc_version = mc_version_of(&index)?;
     Ok(PackInfo {
         name: index.name,
         version: index.version_id,
         mc_version,
         loader: loader_from_dependencies(&index.dependencies),
+        files: installed,
+    })
+}
+
+/// Versión de Minecraft, loader y lista de archivos de un `.mrpack` sin
+/// instalarlo (para comparar versiones al actualizar).
+pub async fn inspect(mrpack: &Path) -> Result<PackInfo> {
+    let index = read_index(mrpack).await?;
+    let mut files: Vec<String> = server_files(&index)
+        .map(|f| f.path.replace('\\', "/"))
+        .collect();
+    let path = mrpack.to_owned();
+    let overrides = tokio::task::spawn_blocking(move || -> Result<Vec<String>> {
+        let mut list = list_zip_prefix(&path, "overrides/")?;
+        list.extend(list_zip_prefix(&path, "server-overrides/")?);
+        Ok(list)
+    })
+    .await
+    .expect("la lectura no debería entrar en pánico")?;
+    files.extend(overrides);
+    files.sort();
+    files.dedup();
+    Ok(PackInfo {
+        mc_version: mc_version_of(&index)?,
+        loader: loader_from_dependencies(&index.dependencies),
+        name: index.name,
+        version: index.version_id,
+        files,
+    })
+}
+
+fn server_files(index: &MrpackIndex) -> impl Iterator<Item = &MrpackFile> {
+    index
+        .files
+        .iter()
+        .filter(|f| f.env.as_ref().is_none_or(|e| e.server != "unsupported"))
+}
+
+fn mc_version_of(index: &MrpackIndex) -> Result<String> {
+    index.dependencies.get("minecraft").cloned().ok_or_else(|| {
+        Error::InvalidConfig(tr!(
+            "el pack no declara versión de Minecraft",
+            "the pack does not declare a Minecraft version"
+        ))
     })
 }
 

@@ -7,13 +7,17 @@
 pub mod archive;
 pub mod download;
 pub mod error;
+pub mod fsutil;
 pub mod hardware;
 pub mod http;
+pub mod i18n;
 pub mod java;
 pub mod net;
 pub mod paths;
 pub mod providers;
 pub mod provision;
+pub mod secrets;
 pub mod server;
+pub mod settings;
 
 pub use error::{Error, Result};

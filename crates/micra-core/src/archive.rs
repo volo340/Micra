@@ -29,8 +29,9 @@ pub fn safe_join(base: &Path, relative: &str) -> Result<PathBuf> {
 
 /// Extrae un ZIP entero. Con `strip_single_root`, si todo el contenido cuelga
 /// de una única carpeta (habitual en server packs de CurseForge), se elimina
-/// ese nivel para que los archivos queden directamente en `dest`.
-pub fn extract_zip(archive: &Path, dest: &Path, strip_single_root: bool) -> Result<()> {
+/// ese nivel para que los archivos queden directamente en `dest`. Devuelve
+/// las rutas relativas (con `/`) de los archivos escritos.
+pub fn extract_zip(archive: &Path, dest: &Path, strip_single_root: bool) -> Result<Vec<String>> {
     let mut zip = zip::ZipArchive::new(File::open(archive)?)?;
     let root = if strip_single_root {
         single_root(&mut zip)
@@ -38,6 +39,7 @@ pub fn extract_zip(archive: &Path, dest: &Path, strip_single_root: bool) -> Resu
         None
     };
 
+    let mut written = Vec::new();
     for i in 0..zip.len() {
         let mut entry = zip.by_index(i)?;
         let name = entry.name().replace('\\', "/");
@@ -52,16 +54,19 @@ pub fn extract_zip(archive: &Path, dest: &Path, strip_single_root: bool) -> Resu
             continue;
         }
         let out = safe_join(dest, &rel)?;
-        write_entry(&mut entry, &out)?;
+        if write_entry(&mut entry, &out)? {
+            written.push(rel.trim_end_matches('/').to_string());
+        }
     }
-    Ok(())
+    Ok(written)
 }
 
 /// Extrae solo las entradas que empiezan por `prefix` (p. ej. `overrides/`
-/// en un `.mrpack`), quitando el prefijo. Devuelve cuántos archivos escribió.
-pub fn extract_zip_prefix(archive: &Path, prefix: &str, dest: &Path) -> Result<usize> {
+/// en un `.mrpack`), quitando el prefijo. Devuelve las rutas relativas de
+/// los archivos escritos.
+pub fn extract_zip_prefix(archive: &Path, prefix: &str, dest: &Path) -> Result<Vec<String>> {
     let mut zip = zip::ZipArchive::new(File::open(archive)?)?;
-    let mut count = 0;
+    let mut written = Vec::new();
     for i in 0..zip.len() {
         let mut entry = zip.by_index(i)?;
         let name = entry.name().replace('\\', "/");
@@ -73,10 +78,22 @@ pub fn extract_zip_prefix(archive: &Path, prefix: &str, dest: &Path) -> Result<u
         }
         let out = safe_join(dest, rel)?;
         if write_entry(&mut entry, &out)? {
-            count += 1;
+            written.push(rel.to_string());
         }
     }
-    Ok(count)
+    Ok(written)
+}
+
+/// Lista las rutas (sin extraer) de las entradas bajo `prefix`, ya sin él.
+pub fn list_zip_prefix(archive: &Path, prefix: &str) -> Result<Vec<String>> {
+    let zip = zip::ZipArchive::new(File::open(archive)?)?;
+    Ok(zip
+        .file_names()
+        .map(|n| n.replace('\\', "/"))
+        .filter(|n| !n.ends_with('/'))
+        .filter_map(|n| n.strip_prefix(prefix).map(str::to_string))
+        .filter(|n| !n.is_empty())
+        .collect())
 }
 
 pub fn extract_tar_gz(archive: &Path, dest: &Path) -> Result<()> {
