@@ -2415,7 +2415,7 @@ dependencies = [
 
 [[package]]
 name = "micra"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "chrono",
  "micra-core",
@@ -2437,7 +2437,7 @@ dependencies = [
 
 [[package]]
 name = "micra-core"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "chrono",
  "directories",
