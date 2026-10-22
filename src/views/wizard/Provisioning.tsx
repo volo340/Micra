@@ -1,12 +1,16 @@
 import { AlertTriangle, Check, CheckCircle2, LayoutDashboard, Power } from "lucide-react";
-import { formatBytes } from "../../lib/format";
+import { useT, type Dict } from "../../i18n";
+import { formatBytes, formatPercent } from "../../lib/format";
 import type { ProvisionStep, ServerConfig } from "../../lib/types";
+import type { TaskProgress } from "../../lib/useTask";
 import { isModpack, type Kind } from "./draft";
 
 interface Props {
   name: string;
   kind: Kind;
   step: ProvisionStep | null;
+  /** Progreso de la copia al importar. */
+  copy: TaskProgress | null;
   javaMajor: number | null;
   error: string | null;
   created: ServerConfig | null;
@@ -28,37 +32,39 @@ function phaseOf(step: ProvisionStep | null): number {
   }
 }
 
-function detail(step: ProvisionStep | null): { text: string; ratio: number | null } | null {
+function detail(step: ProvisionStep | null, t: Dict): { text: string; ratio: number | null } | null {
   if (step?.step === "downloadingFiles") {
-    return { text: `Archivo ${step.done} de ${step.total}`, ratio: step.total ? step.done / step.total : null };
+    return { text: t.wizard.fileOf(step.done, step.total), ratio: step.total ? step.done / step.total : null };
   }
   if (step?.step === "downloadingJava") {
     return step.total
-      ? { text: `${formatBytes(step.downloaded)} de ${formatBytes(step.total)}`, ratio: step.downloaded / step.total }
+      ? {
+          text: t.wizard.bytesOf(formatBytes(step.downloaded), formatBytes(step.total)),
+          ratio: step.downloaded / step.total,
+        }
       : { text: formatBytes(step.downloaded), ratio: null };
   }
   return null;
 }
 
-export function Provisioning({ name, kind, step, javaMajor, error, created, onBack, onOpen }: Props) {
+export function Provisioning({ name, kind, step, copy, javaMajor, error, created, onBack, onOpen }: Props) {
+  const t = useT();
   if (created) {
     return (
       <div className="card provision provision-done">
         <span className="provision-badge" data-tone="success">
           <CheckCircle2 size={30} />
         </span>
-        <h2>¡«{created.name}» está listo!</h2>
-        <p className="muted">
-          Minecraft {created.mcVersion} con Java {created.javaMajor}. Enciéndelo y comparte la dirección con tus amigos.
-        </p>
+        <h2>{t.wizard.ready(created.name)}</h2>
+        <p className="muted">{t.wizard.readyHint(created.mcVersion, created.javaMajor)}</p>
         <div className="provision-actions">
           <button className="btn btn-secondary btn-lg" onClick={() => onOpen(false)}>
             <LayoutDashboard size={17} />
-            Ir al panel
+            {t.wizard.toPanel}
           </button>
           <button className="btn btn-primary btn-lg" onClick={() => onOpen(true)}>
             <Power size={17} />
-            Encender ahora
+            {t.wizard.startNow}
           </button>
         </div>
       </div>
@@ -71,30 +77,41 @@ export function Provisioning({ name, kind, step, javaMajor, error, created, onBa
         <span className="provision-badge" data-tone="error">
           <AlertTriangle size={30} />
         </span>
-        <h2>No se pudo crear el servidor</h2>
+        <h2>{kind === "import" ? t.wizard.importFailed : t.wizard.createFailed}</h2>
         <p className="provision-error selectable">{error}</p>
         <div className="provision-actions">
           <button className="btn btn-secondary btn-lg" onClick={onBack}>
-            Volver al asistente
+            {t.wizard.backToWizard}
           </button>
         </div>
       </div>
     );
   }
 
-  const current = phaseOf(step);
-  const info = detail(step);
-  const phases = [
-    isModpack(kind) ? "Descargar el modpack" : "Preparar Minecraft",
-    javaMajor ? `Instalar Java ${javaMajor}` : "Instalar Java",
-    kind === "vanilla" ? "Descargar el servidor" : "Instalar el servidor y el loader",
-    "Configurar EULA, puerto y memoria",
-  ];
+  let current: number;
+  let info: { text: string; ratio: number | null } | null;
+  let phases: string[];
+  if (kind === "import") {
+    const copying = !copy || copy.total === 0 || copy.done < copy.total;
+    current = copying ? 0 : 1;
+    const ratio = copy && copy.total ? copy.done / copy.total : null;
+    info = copying && ratio !== null ? { text: formatPercent(ratio * 100), ratio } : null;
+    phases = [t.wizard.phaseCopy, t.wizard.phasePrepare];
+  } else {
+    current = phaseOf(step);
+    info = detail(step, t);
+    phases = [
+      isModpack(kind) ? t.wizard.phasePack : t.wizard.phaseMinecraft,
+      javaMajor ? t.wizard.phaseJavaN(javaMajor) : t.wizard.phaseJava,
+      kind === "vanilla" ? t.wizard.phaseServer : t.wizard.phaseLoader,
+      t.wizard.phaseConfig,
+    ];
+  }
 
   return (
     <div className="card provision">
-      <h2>Creando «{name}»…</h2>
-      <p className="muted">Puedes dejar Micra abierta y hacer otra cosa; te avisará al terminar.</p>
+      <h2>{kind === "import" ? t.wizard.importing(name) : t.wizard.creating(name)}</h2>
+      <p className="muted">{t.wizard.creatingHint}</p>
       <ol className="phases">
         {phases.map((label, i) => {
           const state = i < current ? "done" : i === current ? "current" : "todo";

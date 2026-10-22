@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Check, Download, PackageSearch, RefreshCw, Search } from "lucide-react";
+import { useT, type Dict } from "../../i18n";
 import { api, errorMessage } from "../../lib/api";
 import { formatCompact, loaderName } from "../../lib/format";
 import type { PackChoice } from "./draft";
@@ -46,12 +47,12 @@ async function search(source: Source, query: string): Promise<PackResult[]> {
   }));
 }
 
-async function versionsOf(source: Source, projectId: string): Promise<VersionOption[]> {
+async function versionsOf(source: Source, projectId: string, t: Dict): Promise<VersionOption[]> {
   if (source === "modrinth") {
     const versions = await api.modrinthVersions(projectId);
     return versions.map((v) => ({
       id: v.id,
-      label: `${v.version_number} · Minecraft ${v.game_versions.join(", ")} · ${v.loaders.map(loaderName).join(", ")}`,
+      label: `${v.version_number} · ${t.common.minecraft(v.game_versions.join(", "))} · ${v.loaders.map(loaderName).join(", ")}`,
     }));
   }
   // Solo sirven los archivos que tienen paquete de servidor.
@@ -60,7 +61,7 @@ async function versionsOf(source: Source, projectId: string): Promise<VersionOpt
     .filter((f) => f.isServerPack || f.serverPackFileId !== null)
     .map((f) => ({
       id: String(f.id),
-      label: `${f.displayName} · Minecraft ${f.gameVersions.filter((v) => /^\d/.test(v)).join(", ")}`,
+      label: `${f.displayName} · ${t.common.minecraft(f.gameVersions.filter((v) => /^\d/.test(v)).join(", "))}`,
     }));
 }
 
@@ -84,6 +85,7 @@ interface Props {
 }
 
 export function PackStep({ source, value, onChange }: Props) {
+  const t = useT();
   const [query, setQuery] = useState("");
   const [attempt, setAttempt] = useState(0);
   const [results, setResults] = useState<PackResult[] | null>(null);
@@ -109,7 +111,7 @@ export function PackStep({ source, value, onChange }: Props) {
   const loadVersions = (projectId: string, keep: PackChoice) => {
     setVersions(null);
     setVersionsError(null);
-    versionsOf(source, projectId)
+    versionsOf(source, projectId, t)
       .then((list) => {
         setVersions(list);
         const first = list[0];
@@ -142,8 +144,8 @@ export function PackStep({ source, value, onChange }: Props) {
   return (
     <div className="step">
       <div className="step-intro">
-        <h2>Busca un modpack en {sourceName}</h2>
-        <p className="muted">Micra descargará solo lo que necesita el servidor.</p>
+        <h2>{t.wizard.packTitle(sourceName)}</h2>
+        <p className="muted">{t.wizard.packHint}</p>
       </div>
 
       {value && (
@@ -152,11 +154,11 @@ export function PackStep({ source, value, onChange }: Props) {
           <div className="pack-selection-text">
             <span className="pack-selection-title">{value.title}</span>
             {versionsError ? (
-              <span className="error-text">No se pudieron cargar las versiones: {versionsError}</span>
+              <span className="error-text">{t.wizard.packVersionsFailed(versionsError)}</span>
             ) : versions === null ? (
-              <span className="subtle">Cargando versiones…</span>
+              <span className="subtle">{t.wizard.packVersionsLoading}</span>
             ) : versions.length === 0 ? (
-              <span className="error-text">Este modpack no tiene versión para servidor.</span>
+              <span className="error-text">{t.wizard.packNoServer}</span>
             ) : (
               <select
                 className="select"
@@ -165,7 +167,7 @@ export function PackStep({ source, value, onChange }: Props) {
                   const option = versions.find((v) => v.id === e.target.value);
                   onChange({ ...value, versionId: e.target.value, versionLabel: option?.label ?? null });
                 }}
-                aria-label="Versión del modpack"
+                aria-label={t.wizard.packVersion}
               >
                 {versions.map((v) => (
                   <option key={v.id} value={v.id}>
@@ -184,16 +186,16 @@ export function PackStep({ source, value, onChange }: Props) {
           className="input"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          placeholder={`Buscar en ${sourceName}: aventura, tecnología, magia…`}
+          placeholder={t.wizard.packSearch(sourceName)}
           autoFocus
         />
       </div>
 
       {error ? (
         <div className="notice" data-tone="error">
-          <span>No se pudo buscar: {error}</span>
+          <span>{t.wizard.searchFailed(error)}</span>
           <button className="btn btn-secondary btn-sm" onClick={() => setAttempt((n) => n + 1)}>
-            <RefreshCw size={14} /> Reintentar
+            <RefreshCw size={14} /> {t.common.retry}
           </button>
         </div>
       ) : results === null ? (
@@ -207,8 +209,8 @@ export function PackStep({ source, value, onChange }: Props) {
           <span className="empty-icon">
             <PackageSearch size={20} />
           </span>
-          <strong>Sin resultados</strong>
-          <span>Prueba con otras palabras.</span>
+          <strong>{t.wizard.noResults}</strong>
+          <span>{t.wizard.noResultsHint}</span>
         </div>
       ) : (
         <div className="pack-grid">
@@ -225,14 +227,14 @@ export function PackStep({ source, value, onChange }: Props) {
                 <PackIcon url={r.iconUrl} title={r.title} />
                 <span className="pack-body">
                   <span className="pack-title">{r.title}</span>
-                  {r.author && <span className="pack-author">de {r.author}</span>}
+                  {r.author && <span className="pack-author">{t.wizard.by(r.author)}</span>}
                   <span className="pack-desc">{r.description}</span>
                   <span className="pack-meta">
                     <span>
                       <Download size={12} />
                       {formatCompact(r.downloads)}
                     </span>
-                    {r.gameVersion && <span>Minecraft {r.gameVersion}</span>}
+                    {r.gameVersion && <span>{t.common.minecraft(r.gameVersion)}</span>}
                   </span>
                 </span>
                 {selected && (

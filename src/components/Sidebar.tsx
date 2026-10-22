@@ -1,10 +1,16 @@
-import { Box, Cpu, Feather, Hammer, Layers, MemoryStick, Plus, Settings } from "lucide-react";
+import { ArrowUpCircle, Box, Cpu, Feather, Hammer, Layers, MemoryStick, Plus, Settings } from "lucide-react";
 import { Logo } from "./Logo";
-import { STATUS_LABEL } from "./StatusPill";
+import { useT, type Dict } from "../i18n";
 import { formatGb, loaderName } from "../lib/format";
 import type { HardwareInfo, Loader, ServerSummary } from "../lib/types";
 
-export type View = { kind: "home" } | { kind: "server"; id: string } | { kind: "create" } | { kind: "settings" };
+export type ServerTab = "overview" | "players" | "backups" | "mods" | "stats" | "settings";
+
+export type View =
+  | { kind: "home" }
+  | { kind: "server"; id: string; tab: ServerTab }
+  | { kind: "create" }
+  | { kind: "settings" };
 
 const LOADER_ICON: Record<Loader["kind"], typeof Box> = {
   vanilla: Box,
@@ -15,36 +21,39 @@ const LOADER_ICON: Record<Loader["kind"], typeof Box> = {
 };
 
 /** Apagado muestra la versión; cualquier otro estado lo dice con palabras. */
-function itemMeta(s: ServerSummary): string {
+function itemMeta(s: ServerSummary, t: Dict): string {
   if (s.status === "stopped") return `${s.config.mcVersion} · ${loaderName(s.config.loader.kind)}`;
-  if (s.status !== "running") return STATUS_LABEL[s.status];
+  if (s.status !== "running") return t.status[s.status];
   const n = s.players.length;
-  return n === 0 ? "En línea" : `En línea · ${n} ${n === 1 ? "jugador" : "jugadores"}`;
+  return n === 0 ? t.status.running : `${t.status.running} · ${t.common.players(n)}`;
 }
 
 interface Props {
   servers: ServerSummary[];
   view: View;
   hardware: HardwareInfo | null;
+  /** Versión nueva de Micra, si la hay. */
+  update: string | null;
   onNavigate: (view: View) => void;
 }
 
-export function Sidebar({ servers, view, hardware, onNavigate }: Props) {
+export function Sidebar({ servers, view, hardware, update, onNavigate }: Props) {
+  const t = useT();
   return (
     <aside className="sidebar">
-      <button className="brand" onClick={() => onNavigate({ kind: "home" })} aria-label="Inicio">
+      <button className="brand" onClick={() => onNavigate({ kind: "home" })} aria-label={t.sidebar.home}>
         <Logo size={30} />
         <span className="brand-name">Micra</span>
       </button>
 
       <button className="btn btn-primary sidebar-create" onClick={() => onNavigate({ kind: "create" })}>
         <Plus size={16} strokeWidth={2.5} />
-        Nuevo servidor
+        {t.sidebar.newServer}
       </button>
 
       <div className="sidebar-section">
         <div className="sidebar-label">
-          Servidores
+          {t.sidebar.servers}
           <span className="count">{servers.length}</span>
         </div>
         <nav className="server-list">
@@ -57,7 +66,7 @@ export function Sidebar({ servers, view, hardware, onNavigate }: Props) {
                 className="server-item"
                 data-active={active || undefined}
                 data-status={s.status}
-                onClick={() => onNavigate({ kind: "server", id: s.config.id })}
+                onClick={() => onNavigate({ kind: "server", id: s.config.id, tab: active ? view.tab : "overview" })}
               >
                 <span className="server-glyph">
                   <Icon size={16} />
@@ -65,29 +74,35 @@ export function Sidebar({ servers, view, hardware, onNavigate }: Props) {
                 </span>
                 <span className="server-item-text">
                   <span className="server-item-name">{s.config.name}</span>
-                  <span className="server-item-meta">{itemMeta(s)}</span>
+                  <span className="server-item-meta">{itemMeta(s, t)}</span>
                 </span>
               </button>
             );
           })}
-          {servers.length === 0 && <p className="sidebar-empty">Aún no tienes servidores.</p>}
+          {servers.length === 0 && <p className="sidebar-empty">{t.sidebar.empty}</p>}
         </nav>
       </div>
 
       <div className="sidebar-footer">
+        {update && (
+          <button className="update-pill" onClick={() => onNavigate({ kind: "settings" })}>
+            <ArrowUpCircle size={16} />
+            {t.sidebar.update(update)}
+          </button>
+        )}
         <button
           className="nav-item"
           data-active={view.kind === "settings" || undefined}
           onClick={() => onNavigate({ kind: "settings" })}
         >
           <Settings size={16} />
-          Ajustes
+          {t.sidebar.settings}
         </button>
         {hardware && (
           <div className="sidebar-hw">
             <span>
               <Cpu size={13} />
-              {hardware.logicalCpus} hilos
+              {t.common.threads(hardware.logicalCpus)}
             </span>
             <span>
               <MemoryStick size={13} />

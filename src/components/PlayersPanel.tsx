@@ -1,19 +1,25 @@
-import { Crown, LogOut, Users } from "lucide-react";
+import { Crown, LogOut, UserCheck, Users, X } from "lucide-react";
 import { Avatar } from "./Avatar";
+import { useT } from "../i18n";
+import type { Rejection } from "../lib/useAppData";
 
 interface Props {
   players: string[];
   live: boolean;
+  rejections: Rejection[];
   onCommand: (command: string) => void;
+  onLetIn: (name: string) => void;
+  onDismiss: (name: string) => void;
 }
 
-export function PlayersPanel({ players, live, onCommand }: Props) {
+export function PlayersPanel({ players, live, rejections, onCommand, onLetIn, onDismiss }: Props) {
+  const t = useT();
   return (
     <section className="card players">
       <header className="card-header">
         <span className="card-title">
           <Users size={16} />
-          Jugadores
+          {t.playersPanel.title}
         </span>
         <span className="count">{players.length}</span>
       </header>
@@ -22,10 +28,8 @@ export function PlayersPanel({ players, live, onCommand }: Props) {
           <span className="empty-icon">
             <Users size={20} />
           </span>
-          <strong>Nadie conectado</strong>
-          <span>
-            {live ? "Comparte la dirección de arriba con tus amigos." : "Enciende el servidor para que entren."}
-          </span>
+          <strong>{t.playersPanel.nobody}</strong>
+          <span>{live ? t.playersPanel.share : t.playersPanel.startFirst}</span>
         </div>
       ) : (
         <ul className="player-list">
@@ -36,14 +40,16 @@ export function PlayersPanel({ players, live, onCommand }: Props) {
               <div className="player-actions">
                 <button
                   className="btn btn-ghost btn-icon btn-sm"
-                  title="Dar permisos de operador"
+                  title={t.playersPanel.op}
+                  aria-label={t.playersPanel.op}
                   onClick={() => onCommand(`op ${name}`)}
                 >
                   <Crown size={14} />
                 </button>
                 <button
                   className="btn btn-ghost btn-icon btn-sm"
-                  title="Expulsar del servidor"
+                  title={t.playersPanel.kick}
+                  aria-label={t.playersPanel.kick}
                   onClick={() => onCommand(`kick ${name}`)}
                 >
                   <LogOut size={14} />
@@ -52,6 +58,36 @@ export function PlayersPanel({ players, live, onCommand }: Props) {
             </li>
           ))}
         </ul>
+      )}
+      {rejections.length > 0 && (
+        <div className="attempts">
+          <div className="attempts-title">{t.playersPanel.attempts}</div>
+          {rejections.map((r) => (
+            <div key={r.name} className="attempt">
+              <Avatar name={r.name} size={26} />
+              <div className="attempt-text">
+                <span className="player-name">{r.name}</span>
+                <span className="subtle">
+                  {r.reason === "banned" ? t.playersPanel.banned : t.playersPanel.notWhitelisted}
+                </span>
+                {r.reason === "notWhitelisted" && (
+                  <button className="btn btn-secondary btn-sm attempt-action" onClick={() => onLetIn(r.name)}>
+                    <UserCheck size={14} />
+                    {t.playersPanel.letIn}
+                  </button>
+                )}
+              </div>
+              <button
+                className="btn btn-ghost btn-icon btn-sm"
+                title={t.common.dismiss}
+                aria-label={t.common.dismiss}
+                onClick={() => onDismiss(r.name)}
+              >
+                <X size={14} />
+              </button>
+            </div>
+          ))}
+        </div>
       )}
     </section>
   );

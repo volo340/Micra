@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type PointerEvent } from "react";
+import { useT } from "../i18n";
 
 interface Props {
   values: number[];
@@ -13,15 +14,12 @@ interface Props {
 
 const PAD = 6;
 
-function ago(seconds: number) {
-  return seconds === 0 ? "ahora" : `hace ${seconds} s`;
-}
-
 /**
  * Línea de tendencia de una sola serie: línea de 2 px, relleno al 10 %,
  * punto final con anillo del color de la superficie y lectura al pasar el ratón.
  */
 export function Sparkline({ values, max, color, capacity, format, label, height = 52 }: Props) {
+  const t = useT();
   const ref = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(0);
   const [hover, setHover] = useState<number | null>(null);
@@ -53,7 +51,7 @@ export function Sparkline({ values, max, color, capacity, format, label, height 
   };
 
   const dot = hover ?? (n ? n - 1 : null);
-  const current = n ? format(values[n - 1]) : "sin datos";
+  const current = n ? format(values[n - 1]) : t.chart.noData;
 
   return (
     <div
@@ -66,7 +64,7 @@ export function Sparkline({ values, max, color, capacity, format, label, height 
       onBlur={() => setHover(null)}
       tabIndex={n ? 0 : -1}
       role="img"
-      aria-label={`${label}, último minuto. Valor actual: ${current}`}
+      aria-label={t.chart.sparkLabel(label, current)}
     >
       {width > 0 && (
         <svg width={width} height={height} aria-hidden="true">
@@ -84,7 +82,7 @@ export function Sparkline({ values, max, color, capacity, format, label, height 
       {hover !== null && (
         <div className="spark-tip" style={{ left: Math.min(Math.max(xs[hover], 48), width - 48) }}>
           <strong>{format(values[hover])}</strong>
-          <span>{ago(n - 1 - hover)}</span>
+          <span>{t.chart.secondsAgo(n - 1 - hover)}</span>
         </div>
       )}
     </div>
