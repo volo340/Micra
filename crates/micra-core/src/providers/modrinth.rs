@@ -35,6 +35,10 @@ pub struct SearchQuery {
     pub game_version: Option<String>,
     /// fabric, forge, neoforge, quilt, paper...
     pub loader: Option<String>,
+    /// Otros loaders que también valen (Quilt carga mods de Fabric): basta
+    /// con que el proyecto tenga uno de ellos.
+    #[serde(default)]
+    pub extra_loaders: Vec<String>,
     #[serde(default)]
     pub offset: u32,
     #[serde(default = "default_limit")]
@@ -269,7 +273,12 @@ fn build_facets(q: &SearchQuery) -> String {
         facets.push(vec![format!("versions:{gv}")]);
     }
     if let Some(loader) = &q.loader {
-        facets.push(vec![format!("categories:{loader}")]);
+        facets.push(
+            std::iter::once(loader)
+                .chain(&q.extra_loaders)
+                .map(|l| format!("categories:{l}"))
+                .collect(),
+        );
     }
     serde_json::to_string(&facets).expect("los facets siempre son serializables")
 }
@@ -285,12 +294,24 @@ mod tests {
             kind: ProjectKind::Modpack,
             game_version: Some("1.20.1".into()),
             loader: Some("forge".into()),
+            extra_loaders: Vec::new(),
             offset: 0,
             limit: 20,
         };
         assert_eq!(
             build_facets(&q),
             r#"[["project_type:modpack"],["server_side:required","server_side:optional"],["versions:1.20.1"],["categories:forge"]]"#
+        );
+        let quilt = SearchQuery {
+            kind: ProjectKind::Mod,
+            game_version: None,
+            loader: Some("quilt".into()),
+            extra_loaders: vec!["fabric".into()],
+            ..q
+        };
+        assert_eq!(
+            build_facets(&quilt),
+            r#"[["project_type:mod"],["server_side:required","server_side:optional"],["categories:quilt","categories:fabric"]]"#
         );
     }
 }
