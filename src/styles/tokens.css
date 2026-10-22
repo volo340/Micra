@@ -38,6 +38,8 @@
   /* Series de las gráficas (validadas contra --surface: daltonismo y contraste) */
   --series-cpu: #3987e5;
   --series-ram: #d55181;
+  --series-players: #9085e9;
+  --series-tps: #199e70;
 
   /* Tipografía */
   --font: "Inter Variable", "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
