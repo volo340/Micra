@@ -1,0 +1,51 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Micra",
+  "version": "0.1.0",
+  "identifier": "io.github.volo340.micra",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "Micra",
+        "width": 1200,
+        "height": 780,
+        "minWidth": 960,
+        "minHeight": 600,
+        "theme": "Dark"
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; img-src 'self' data: https://cdn.modrinth.com https://media.forgecdn.net https://mc-heads.net; style-src 'self' 'unsafe-inline'; connect-src ipc: http://ipc.localhost"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["nsis", "deb", "rpm", "appimage"],
+    "category": "Game",
+    "publisher": "volo340",
+    "shortDescription": "Convierte tu PC en un servidor de Minecraft",
+    "longDescription": "Micra crea y gestiona servidores de Minecraft (Vanilla, Fabric, Forge, NeoForge y modpacks de Modrinth y CurseForge) sin configurar nada a mano: descarga Java automáticamente y muestra la consola, la CPU, la RAM y los jugadores en tiempo real.",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.png",
+      "icons/icon.ico"
+    ],
+    "windows": {
+      "webviewInstallMode": { "type": "downloadBootstrapper", "silent": true },
+      "nsis": {
+        "installMode": "currentUser",
+        "languages": ["Spanish", "English"],
+        "displayLanguageSelector": false
+      }
+    }
+  }
+}
