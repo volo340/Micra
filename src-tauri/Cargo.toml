@@ -3,7 +3,8 @@ name = "micra"
 description = "Convierte tu PC en un servidor de Minecraft"
 version.workspace = true
 edition.workspace = true
-license.workspace = true
+license-file.workspace = true
+publish.workspace = true
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }

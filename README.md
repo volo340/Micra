@@ -207,5 +207,9 @@ Desinstalar Micra no borra esta carpeta.
 ¿Quieres compilar Micra o colaborar? Las instrucciones están en
 [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
 
+Puedes usar Micra gratis. El código tiene todos los derechos reservados: se
+puede ver, pero no copiar ni reutilizar sin permiso. Los detalles están en
+[LICENSE](LICENSE).
+
 Micra no es un producto oficial de Minecraft. No está aprobado por Mojang ni
 por Microsoft, ni asociado con ellos.
