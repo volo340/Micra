@@ -7,7 +7,7 @@ use std::path::Path;
 use futures_util::{stream, TryStreamExt};
 use serde::Deserialize;
 
-use crate::archive::{extract_zip_prefix, list_zip_prefix, safe_join};
+use crate::archive::{extract_zip_prefix_filtered, list_zip_prefix, safe_join};
 use crate::download::{download_file, ExpectedHash, HashAlgo};
 use crate::server::config::Loader;
 use crate::{tr, Error, Result};
@@ -64,11 +64,14 @@ pub struct PackInfo {
 /// Progreso: (archivos completados, total de archivos).
 pub type FileProgress<'a> = &'a (dyn Fn(usize, usize) + Send + Sync);
 
+/// `protected`: rutas (o carpetas) de la carpeta del servidor que el pack no
+/// puede sobrescribir, como el mundo o `server.properties` al actualizar.
 pub async fn install_mrpack(
     http: &reqwest::Client,
     mrpack: &Path,
     server_dir: &Path,
     progress: Option<FileProgress<'_>>,
+    protected: &[String],
 ) -> Result<PackInfo> {
     let index = read_index(mrpack).await?;
     if index.game != "minecraft" {
@@ -80,7 +83,9 @@ pub async fn install_mrpack(
     }
 
     // Archivos sueltos: solo los que el servidor necesita.
-    let files: Vec<&MrpackFile> = server_files(&index).collect();
+    let files: Vec<&MrpackFile> = server_files(&index)
+        .filter(|f| !is_protected(&f.path, protected))
+        .collect();
     let mut installed: Vec<String> = files.iter().map(|f| f.path.replace('\\', "/")).collect();
     let total = files.len();
     let done = std::sync::atomic::AtomicUsize::new(0);
@@ -120,12 +125,15 @@ pub async fn install_mrpack(
     // para que tenga prioridad.
     let mrpack_owned = mrpack.to_owned();
     let dir = server_dir.to_owned();
+    let protected_owned = protected.to_vec();
     let overrides = tokio::task::spawn_blocking(move || -> Result<Vec<String>> {
-        let mut written = extract_zip_prefix(&mrpack_owned, "overrides/", &dir)?;
-        written.extend(extract_zip_prefix(
+        let skip = |rel: &str| is_protected(rel, &protected_owned);
+        let mut written = extract_zip_prefix_filtered(&mrpack_owned, "overrides/", &dir, &skip)?;
+        written.extend(extract_zip_prefix_filtered(
             &mrpack_owned,
             "server-overrides/",
             &dir,
+            &skip,
         )?);
         Ok(written)
     })
@@ -217,7 +225,20 @@ fn loader_from_dependencies(deps: &HashMap<String, String>) -> Loader {
     }
 }
 
-fn is_allowed_url(url: &str) -> bool {
+/// `true` si `rel` es una de las rutas protegidas o está dentro de una.
+pub fn is_protected(rel: &str, protected: &[String]) -> bool {
+    let rel = rel.replace('\\', "/");
+    let rel = rel.trim_start_matches("./");
+    protected.iter().any(|p| {
+        rel.eq_ignore_ascii_case(p)
+            || (rel.len() > p.len()
+                && rel.as_bytes()[p.len()] == b'/'
+                && rel[..p.len()].eq_ignore_ascii_case(p))
+    })
+}
+
+/// Solo HTTPS y solo los dominios que permite la especificación.
+pub fn is_allowed_url(url: &str) -> bool {
     let Ok(parsed) = reqwest::Url::parse(url) else {
         return false;
     };
@@ -241,6 +262,16 @@ mod tests {
         assert!(!is_allowed_url(
             "https://cdn.modrinth.com.evil.example/a.jar"
         ));
+    }
+
+    #[test]
+    fn protected_paths() {
+        let protected = vec!["world".to_string(), "server.properties".to_string()];
+        assert!(is_protected("world/level.dat", &protected));
+        assert!(is_protected("World/region/r.0.0.mca", &protected));
+        assert!(is_protected("server.properties", &protected));
+        assert!(!is_protected("worldedit/config.yml", &protected));
+        assert!(!is_protected("config/server.properties.bak", &protected));
     }
 
     #[test]

@@ -32,6 +32,16 @@ pub fn safe_join(base: &Path, relative: &str) -> Result<PathBuf> {
 /// ese nivel para que los archivos queden directamente en `dest`. Devuelve
 /// las rutas relativas (con `/`) de los archivos escritos.
 pub fn extract_zip(archive: &Path, dest: &Path, strip_single_root: bool) -> Result<Vec<String>> {
+    extract_zip_filtered(archive, dest, strip_single_root, &|_| false)
+}
+
+/// Como `extract_zip`, sin escribir las rutas para las que `skip` es `true`.
+pub fn extract_zip_filtered(
+    archive: &Path,
+    dest: &Path,
+    strip_single_root: bool,
+    skip: &dyn Fn(&str) -> bool,
+) -> Result<Vec<String>> {
     let mut zip = zip::ZipArchive::new(File::open(archive)?)?;
     let root = if strip_single_root {
         single_root(&mut zip)
@@ -50,7 +60,7 @@ pub fn extract_zip(archive: &Path, dest: &Path, strip_single_root: bool) -> Resu
             },
             None => name,
         };
-        if rel.is_empty() {
+        if rel.is_empty() || skip(rel.trim_end_matches('/')) {
             continue;
         }
         let out = safe_join(dest, &rel)?;
@@ -65,6 +75,16 @@ pub fn extract_zip(archive: &Path, dest: &Path, strip_single_root: bool) -> Resu
 /// en un `.mrpack`), quitando el prefijo. Devuelve las rutas relativas de
 /// los archivos escritos.
 pub fn extract_zip_prefix(archive: &Path, prefix: &str, dest: &Path) -> Result<Vec<String>> {
+    extract_zip_prefix_filtered(archive, prefix, dest, &|_| false)
+}
+
+/// Como `extract_zip_prefix`, sin escribir las rutas para las que `skip` es `true`.
+pub fn extract_zip_prefix_filtered(
+    archive: &Path,
+    prefix: &str,
+    dest: &Path,
+    skip: &dyn Fn(&str) -> bool,
+) -> Result<Vec<String>> {
     let mut zip = zip::ZipArchive::new(File::open(archive)?)?;
     let mut written = Vec::new();
     for i in 0..zip.len() {
@@ -73,7 +93,7 @@ pub fn extract_zip_prefix(archive: &Path, prefix: &str, dest: &Path) -> Result<V
         let Some(rel) = name.strip_prefix(prefix) else {
             continue;
         };
-        if rel.is_empty() {
+        if rel.is_empty() || skip(rel.trim_end_matches('/')) {
             continue;
         }
         let out = safe_join(dest, rel)?;
@@ -92,6 +112,29 @@ pub fn list_zip_prefix(archive: &Path, prefix: &str) -> Result<Vec<String>> {
         .map(|n| n.replace('\\', "/"))
         .filter(|n| !n.ends_with('/'))
         .filter_map(|n| n.strip_prefix(prefix).map(str::to_string))
+        .filter(|n| !n.is_empty())
+        .collect())
+}
+
+/// Rutas de los archivos de un ZIP (sin extraer), quitando la carpeta raíz
+/// única si la hay, igual que `extract_zip` con `strip_single_root`.
+pub fn list_zip(archive: &Path, strip_single_root: bool) -> Result<Vec<String>> {
+    let mut zip = zip::ZipArchive::new(File::open(archive)?)?;
+    let root = if strip_single_root {
+        single_root(&mut zip)
+    } else {
+        None
+    };
+    Ok(zip
+        .file_names()
+        .map(|n| n.replace('\\', "/"))
+        .filter(|n| !n.ends_with('/'))
+        .filter_map(|n| match &root {
+            Some(r) => n
+                .strip_prefix(r.as_str())
+                .map(|rest| rest.trim_start_matches('/').to_string()),
+            None => Some(n),
+        })
         .filter(|n| !n.is_empty())
         .collect())
 }

@@ -224,6 +224,20 @@ impl Loader {
         }
     }
 
+    /// Loaders cuyos mods valen en este servidor, para las búsquedas en
+    /// Modrinth: Quilt carga mods de Fabric y el NeoForge de 1.20.1 carga
+    /// mods de Forge.
+    pub fn modrinth_loaders(&self, mc_version: &str) -> Vec<&'static str> {
+        match self {
+            Loader::Vanilla => Vec::new(),
+            Loader::Fabric { .. } => vec!["fabric"],
+            Loader::Quilt { .. } => vec!["quilt", "fabric"],
+            Loader::Forge { .. } => vec!["forge"],
+            Loader::NeoForge { .. } if mc_version == "1.20.1" => vec!["neoforge", "forge"],
+            Loader::NeoForge { .. } => vec!["neoforge"],
+        }
+    }
+
     pub fn supports_mods(&self) -> bool {
         !matches!(self, Loader::Vanilla)
     }

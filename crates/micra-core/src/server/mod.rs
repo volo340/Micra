@@ -3,10 +3,12 @@
 //! proceso en ejecución.
 
 pub mod affinity;
+pub mod backup;
 pub mod config;
 pub mod detect;
 pub mod eula;
 pub mod launcher;
+pub mod mods;
 pub mod monitor;
 pub mod pack;
 pub mod players;
@@ -14,5 +16,6 @@ pub mod ports;
 pub mod process;
 pub mod properties;
 pub mod sandbox;
+pub mod scan;
 pub mod schedule;
 pub mod version;
