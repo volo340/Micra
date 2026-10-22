@@ -59,7 +59,13 @@ mod tests {
     #[test]
     fn merge_keeps_unknown_and_updates_known() {
         let current = "#Minecraft server properties\nserver-port=25565\ndifficulty=easy\n";
-        let out = merge(current, &[("server-port", "25570".into()), ("motd", "Año nuevo".into())]);
+        let out = merge(
+            current,
+            &[
+                ("server-port", "25570".into()),
+                ("motd", "Año nuevo".into()),
+            ],
+        );
         assert_eq!(
             out,
             "#Minecraft server properties\nserver-port=25570\ndifficulty=easy\nmotd=A\\u00f1o nuevo\n"

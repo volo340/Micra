@@ -60,7 +60,13 @@ pub async fn latest_runtime(client: &reqwest::Client, major: u32) -> Result<Runt
         let url = format!(
             "{API}/assets/latest/{major}/hotspot?architecture={arch}&image_type={image_type}&os={os}&vendor=eclipse"
         );
-        let assets: Vec<Asset> = client.get(&url).send().await?.error_for_status()?.json().await?;
+        let assets: Vec<Asset> = client
+            .get(&url)
+            .send()
+            .await?
+            .error_for_status()?
+            .json()
+            .await?;
         if let Some(asset) = assets.into_iter().next() {
             let pkg = asset.binary.package;
             return Ok(RuntimeRelease {

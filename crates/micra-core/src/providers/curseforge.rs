@@ -103,7 +103,10 @@ impl CfFile {
 
     fn sha1(&self) -> Option<&str> {
         // algo: 1 = SHA1, 2 = MD5
-        self.hashes.iter().find(|h| h.algo == 1).map(|h| h.value.as_str())
+        self.hashes
+            .iter()
+            .find(|h| h.algo == 1)
+            .map(|h| h.value.as_str())
     }
 }
 
@@ -121,7 +124,10 @@ pub struct CurseForgeClient {
 
 impl CurseForgeClient {
     pub fn new(http: reqwest::Client, api_key: impl Into<String>) -> Self {
-        Self { http, api_key: api_key.into() }
+        Self {
+            http,
+            api_key: api_key.into(),
+        }
     }
 
     /// Lee la clave de `MICRA_CURSEFORGE_API_KEY` (en ejecución o, si no,
@@ -148,7 +154,9 @@ impl CurseForgeClient {
             .send()
             .await?;
         if res.status() == reqwest::StatusCode::FORBIDDEN {
-            return Err(Error::Api("CurseForge rechazó la API key o el recurso no es distribuible".into()));
+            return Err(Error::Api(
+                "CurseForge rechazó la API key o el recurso no es distribuible".into(),
+            ));
         }
         Ok(res.error_for_status()?.json().await?)
     }
@@ -174,7 +182,10 @@ impl CurseForgeClient {
             params.push(("gameVersion", gv.to_string()));
         }
         let env: Envelope<Vec<CfMod>> = self.get("/mods/search", &params).await?;
-        Ok(CfSearchResponse { data: env.data, pagination: env.pagination })
+        Ok(CfSearchResponse {
+            data: env.data,
+            pagination: env.pagination,
+        })
     }
 
     pub async fn files(&self, mod_id: u64, game_version: Option<&str>) -> Result<Vec<CfFile>> {
@@ -182,11 +193,17 @@ impl CurseForgeClient {
         if let Some(gv) = game_version {
             params.push(("gameVersion", gv.to_string()));
         }
-        Ok(self.get(&format!("/mods/{mod_id}/files"), &params).await?.data)
+        Ok(self
+            .get(&format!("/mods/{mod_id}/files"), &params)
+            .await?
+            .data)
     }
 
     pub async fn file(&self, mod_id: u64, file_id: u64) -> Result<CfFile> {
-        Ok(self.get(&format!("/mods/{mod_id}/files/{file_id}"), &[]).await?.data)
+        Ok(self
+            .get(&format!("/mods/{mod_id}/files/{file_id}"), &[])
+            .await?
+            .data)
     }
 
     /// Para un archivo de modpack, devuelve su "server pack" (el ZIP listo
@@ -204,7 +221,12 @@ impl CurseForgeClient {
         }
     }
 
-    pub async fn download(&self, file: &CfFile, dest: &Path, progress: Option<Progress<'_>>) -> Result<()> {
+    pub async fn download(
+        &self,
+        file: &CfFile,
+        dest: &Path,
+        progress: Option<Progress<'_>>,
+    ) -> Result<()> {
         let url = match &file.download_url {
             Some(u) => u.clone(),
             None => {

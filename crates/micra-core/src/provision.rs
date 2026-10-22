@@ -17,7 +17,9 @@ use crate::paths::AppPaths;
 use crate::providers::curseforge::CurseForgeClient;
 use crate::providers::modrinth::ModrinthClient;
 use crate::providers::{loaders, mojang, mrpack};
-use crate::server::config::{slugify, validate_resources, CpuConfig, Loader, MemoryConfig, ServerConfig};
+use crate::server::config::{
+    slugify, validate_resources, CpuConfig, Loader, MemoryConfig, ServerConfig,
+};
 use crate::server::detect::detect_launch_target;
 use crate::server::{eula, properties};
 use crate::{archive, hardware, Error, Result};
@@ -29,7 +31,10 @@ pub enum ServerSource {
     Vanilla { mc_version: String },
     /// Sin `loader_version` se usa la última versión estable.
     #[serde(rename_all = "camelCase")]
-    Fabric { mc_version: String, loader_version: Option<String> },
+    Fabric {
+        mc_version: String,
+        loader_version: Option<String>,
+    },
     #[serde(rename_all = "camelCase")]
     Modrinth { version_id: String },
     #[serde(rename_all = "camelCase")]
@@ -82,11 +87,18 @@ impl Provisioner<'_> {
         // Validar antes de descargar nada.
         if !req.eula_accepted {
             return Err(Error::InvalidConfig(
-                "debes aceptar el EULA de Minecraft (https://aka.ms/MinecraftEULA) para continuar".into(),
+                "debes aceptar el EULA de Minecraft (https://aka.ms/MinecraftEULA) para continuar"
+                    .into(),
             ));
         }
         let hw = hardware::hardware_info();
-        validate_resources(&req.memory, &req.cpu, req.port, hw.total_memory_mb, hw.logical_cpus)?;
+        validate_resources(
+            &req.memory,
+            &req.cpu,
+            req.port,
+            hw.total_memory_mb,
+            hw.logical_cpus,
+        )?;
         let id = self.unique_id(&req.name);
         let dir = self.paths.server_dir(&id);
         tokio::fs::create_dir_all(&dir).await?;
@@ -95,7 +107,10 @@ impl Provisioner<'_> {
         let files_progress = |done, total| on_step(ProvisionStep::DownloadingFiles { done, total });
         let (mc_version, loader, prepackaged) = match &req.source {
             ServerSource::Vanilla { mc_version } => (mc_version.clone(), Loader::Vanilla, false),
-            ServerSource::Fabric { mc_version, loader_version } => {
+            ServerSource::Fabric {
+                mc_version,
+                loader_version,
+            } => {
                 let loader_version = match loader_version {
                     Some(v) => v.clone(),
                     None => loaders::latest_fabric_loader(self.http, mc_version).await?,
@@ -108,9 +123,15 @@ impl Provisioner<'_> {
                     .primary_file()
                     .ok_or_else(|| Error::NotFound("archivo .mrpack".into()))?;
                 let pack_path = self.paths.cache().join(&file.filename);
-                let expected = file.hashes.sha512.as_ref().map(|h| ExpectedHash::new(HashAlgo::Sha512, h));
+                let expected = file
+                    .hashes
+                    .sha512
+                    .as_ref()
+                    .map(|h| ExpectedHash::new(HashAlgo::Sha512, h));
                 download_file(self.http, &file.url, &pack_path, expected.as_ref(), None).await?;
-                let info = mrpack::install_mrpack(self.http, &pack_path, &dir, Some(&files_progress)).await?;
+                let info =
+                    mrpack::install_mrpack(self.http, &pack_path, &dir, Some(&files_progress))
+                        .await?;
                 (info.mc_version, info.loader, false)
             }
             ServerSource::CurseForge { mod_id, file_id } => {
@@ -122,9 +143,11 @@ impl Provisioner<'_> {
                 let zip_path = self.paths.cache().join(&server_pack.file_name);
                 cf.download(&server_pack, &zip_path, None).await?;
                 let dir_clone = dir.clone();
-                tokio::task::spawn_blocking(move || archive::extract_zip(&zip_path, &dir_clone, true))
-                    .await
-                    .expect("la extracción no debería entrar en pánico")?;
+                tokio::task::spawn_blocking(move || {
+                    archive::extract_zip(&zip_path, &dir_clone, true)
+                })
+                .await
+                .expect("la extracción no debería entrar en pánico")?;
                 let mc = file
                     .minecraft_version()
                     .ok_or_else(|| Error::NotFound("versión de Minecraft del modpack".into()))?
@@ -143,7 +166,8 @@ impl Provisioner<'_> {
             }
         };
         on_step(ProvisionStep::InstallingJava { major: java_major });
-        let java_progress = |downloaded, total| on_step(ProvisionStep::DownloadingJava { downloaded, total });
+        let java_progress =
+            |downloaded, total| on_step(ProvisionStep::DownloadingJava { downloaded, total });
         let java = self.java.ensure(java_major, Some(&java_progress)).await?;
 
         let launch = match detect_launch_target(&dir)? {

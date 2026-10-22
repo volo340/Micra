@@ -29,18 +29,30 @@ async fn launch_command_and_stop() {
     std::fs::write(&java_bin, FAKE_JAVA).unwrap();
     std::fs::set_permissions(&java_bin, std::fs::Permissions::from_mode(0o755)).unwrap();
 
-    let java = JavaRuntime { major: 21, release_name: "fake".into(), home: dir.path().into(), java_bin };
+    let java = JavaRuntime {
+        major: 21,
+        release_name: "fake".into(),
+        home: dir.path().into(),
+        java_bin,
+    };
     let cfg = ServerConfig {
         id: "t".into(),
         name: "t".into(),
         mc_version: "1.21.1".into(),
         loader: Loader::Vanilla,
         java_major: 21,
-        memory: MemoryConfig { min_mb: 512, max_mb: 1024 },
-        cpu: CpuConfig { cores: Some(vec![0]) },
+        memory: MemoryConfig {
+            min_mb: 512,
+            max_mb: 1024,
+        },
+        cpu: CpuConfig {
+            cores: Some(vec![0]),
+        },
         port: 25565,
         eula_accepted: true,
-        launch: LaunchTarget::Jar { path: "server.jar".into() },
+        launch: LaunchTarget::Jar {
+            path: "server.jar".into(),
+        },
         use_aikar_flags: true,
         extra_jvm_args: vec![],
     };

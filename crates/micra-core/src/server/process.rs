@@ -78,11 +78,25 @@ impl ServerHandle {
         let stdout = child.stdout.take().expect("stdout en tubería");
         let stderr = child.stderr.take().expect("stderr en tubería");
         let readers = [
-            spawn_reader(stdout, LogStream::Stdout, events.clone(), status_tx.clone(), players.clone()),
-            spawn_reader(stderr, LogStream::Stderr, events.clone(), status_tx.clone(), players.clone()),
+            spawn_reader(
+                stdout,
+                LogStream::Stdout,
+                events.clone(),
+                status_tx.clone(),
+                players.clone(),
+            ),
+            spawn_reader(
+                stderr,
+                LogStream::Stderr,
+                events.clone(),
+                status_tx.clone(),
+                players.clone(),
+            ),
         ];
 
-        let _ = events.send(ServerEvent::Status { status: ServerStatus::Starting });
+        let _ = events.send(ServerEvent::Status {
+            status: ServerStatus::Starting,
+        });
         let pid = child.id();
         let stdin = child.stdin.take();
 
@@ -113,7 +127,9 @@ impl ServerHandle {
                 players.lock().unwrap().clear();
                 status_tx.send_replace(final_status);
                 let _ = events.send(ServerEvent::Exited { code });
-                let _ = events.send(ServerEvent::Status { status: final_status });
+                let _ = events.send(ServerEvent::Status {
+                    status: final_status,
+                });
             });
         }
 
@@ -169,12 +185,15 @@ impl ServerHandle {
             return Ok(());
         }
         self.status_tx.send_replace(ServerStatus::Stopping);
-        let _ = self.events.send(ServerEvent::Status { status: ServerStatus::Stopping });
+        let _ = self.events.send(ServerEvent::Status {
+            status: ServerStatus::Stopping,
+        });
         if self.send_command("stop").await.is_err() {
             self.kill();
         }
         let mut status = self.status.clone();
-        let finished = status.wait_for(|s| matches!(s, ServerStatus::Stopped | ServerStatus::Crashed));
+        let finished =
+            status.wait_for(|s| matches!(s, ServerStatus::Stopped | ServerStatus::Crashed));
         if tokio::time::timeout(timeout, finished).await.is_err() {
             tracing::warn!("el servidor no respondió a `stop`; forzando cierre");
             self.kill();
@@ -212,7 +231,9 @@ fn spawn_reader(
                 Some(LineInfo::Ready) => {
                     if *status_tx.borrow() == ServerStatus::Starting {
                         status_tx.send_replace(ServerStatus::Running);
-                        let _ = events.send(ServerEvent::Status { status: ServerStatus::Running });
+                        let _ = events.send(ServerEvent::Status {
+                            status: ServerStatus::Running,
+                        });
                     }
                 }
                 Some(LineInfo::Joined(name)) => {
@@ -276,10 +297,15 @@ mod tests {
             Some(LineInfo::Joined("Steve_01".into()))
         );
         assert_eq!(
-            parse_line("[12:01:00] [Server thread/INFO] [minecraft/MinecraftServer]: Alex left the game"),
+            parse_line(
+                "[12:01:00] [Server thread/INFO] [minecraft/MinecraftServer]: Alex left the game"
+            ),
             Some(LineInfo::Left("Alex".into()))
         );
         // Un mensaje de chat no debe confundirse con una entrada.
-        assert_eq!(parse_line("[12:02:00] [Server thread/INFO]: <Steve> hola joined the game"), None);
+        assert_eq!(
+            parse_line("[12:02:00] [Server thread/INFO]: <Steve> hola joined the game"),
+            None
+        );
     }
 }

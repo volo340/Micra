@@ -69,7 +69,10 @@ pub async fn install_mrpack(
 ) -> Result<PackInfo> {
     let index = read_index(mrpack).await?;
     if index.game != "minecraft" {
-        return Err(Error::InvalidConfig(format!("juego no soportado: {}", index.game)));
+        return Err(Error::InvalidConfig(format!(
+            "juego no soportado: {}",
+            index.game
+        )));
     }
 
     // Archivos sueltos: solo los que el servidor necesita.
@@ -148,18 +151,26 @@ fn loader_from_dependencies(deps: &HashMap<String, String>) -> Loader {
     } else if let Some(v) = deps.get("forge") {
         Loader::Forge { version: v.clone() }
     } else if let Some(v) = deps.get("fabric-loader") {
-        Loader::Fabric { loader_version: v.clone() }
+        Loader::Fabric {
+            loader_version: v.clone(),
+        }
     } else if let Some(v) = deps.get("quilt-loader") {
-        Loader::Quilt { loader_version: v.clone() }
+        Loader::Quilt {
+            loader_version: v.clone(),
+        }
     } else {
         Loader::Vanilla
     }
 }
 
 fn is_allowed_url(url: &str) -> bool {
-    let Ok(parsed) = reqwest::Url::parse(url) else { return false };
+    let Ok(parsed) = reqwest::Url::parse(url) else {
+        return false;
+    };
     parsed.scheme() == "https"
-        && parsed.host_str().is_some_and(|h| ALLOWED_HOSTS.contains(&h))
+        && parsed
+            .host_str()
+            .is_some_and(|h| ALLOWED_HOSTS.contains(&h))
 }
 
 #[cfg(test)]
@@ -168,10 +179,14 @@ mod tests {
 
     #[test]
     fn url_allowlist() {
-        assert!(is_allowed_url("https://cdn.modrinth.com/data/AANobbMI/versions/x/sodium.jar"));
+        assert!(is_allowed_url(
+            "https://cdn.modrinth.com/data/AANobbMI/versions/x/sodium.jar"
+        ));
         assert!(!is_allowed_url("http://cdn.modrinth.com/a.jar"));
         assert!(!is_allowed_url("https://evil.example.com/a.jar"));
-        assert!(!is_allowed_url("https://cdn.modrinth.com.evil.example/a.jar"));
+        assert!(!is_allowed_url(
+            "https://cdn.modrinth.com.evil.example/a.jar"
+        ));
     }
 
     #[test]
@@ -181,7 +196,9 @@ mod tests {
         deps.insert("fabric-loader".into(), "0.16.9".into());
         assert_eq!(
             loader_from_dependencies(&deps),
-            Loader::Fabric { loader_version: "0.16.9".into() }
+            Loader::Fabric {
+                loader_version: "0.16.9".into()
+            }
         );
     }
 }

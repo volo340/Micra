@@ -9,10 +9,12 @@ use std::time::Duration;
 
 use micra_core::hardware::HardwareInfo;
 use micra_core::java::JavaRuntime;
-use micra_core::provision::{list_servers as list_server_dirs, NewServerRequest, ProvisionStep, Provisioner};
 use micra_core::providers::curseforge::{CfClass, CfFile, CfSearchResponse};
 use micra_core::providers::modrinth::{SearchQuery, SearchResponse, Version};
 use micra_core::providers::mojang::{self, VersionEntry};
+use micra_core::provision::{
+    list_servers as list_server_dirs, NewServerRequest, ProvisionStep, Provisioner,
+};
 use micra_core::server::config::ServerConfig;
 use micra_core::server::monitor::{ProcessMonitor, ResourceSample};
 use micra_core::server::process::{ServerEvent, ServerHandle, ServerStatus};
@@ -89,7 +91,11 @@ pub fn network_info() -> NetworkInfo {
 #[tauri::command]
 pub async fn minecraft_versions(state: State<'_, AppState>) -> CmdResult<Vec<VersionEntry>> {
     let manifest = mojang::fetch_manifest(&state.http).await?;
-    Ok(manifest.versions.into_iter().filter(|v| v.kind == "release").collect())
+    Ok(manifest
+        .versions
+        .into_iter()
+        .filter(|v| v.kind == "release")
+        .collect())
 }
 
 #[tauri::command]
@@ -98,7 +104,10 @@ pub fn list_java_runtimes(state: State<'_, AppState>) -> Vec<JavaRuntime> {
 }
 
 #[tauri::command]
-pub async fn search_modrinth(state: State<'_, AppState>, query: SearchQuery) -> CmdResult<SearchResponse> {
+pub async fn search_modrinth(
+    state: State<'_, AppState>,
+    query: SearchQuery,
+) -> CmdResult<SearchResponse> {
     state.modrinth.search(&query).await
 }
 
@@ -129,7 +138,14 @@ pub async fn search_curseforge(
     index: Option<u32>,
 ) -> CmdResult<CfSearchResponse> {
     let cf = state.curseforge.as_ref().ok_or_else(curseforge_missing)?;
-    cf.search(&query, class, game_version.as_deref(), index.unwrap_or(0), 20).await
+    cf.search(
+        &query,
+        class,
+        game_version.as_deref(),
+        index.unwrap_or(0),
+        20,
+    )
+    .await
 }
 
 #[tauri::command]
@@ -181,7 +197,13 @@ pub async fn create_server(
 
 #[tauri::command]
 pub async fn start_server(app: AppHandle, state: State<'_, AppState>, id: String) -> CmdResult<()> {
-    if state.running.read().await.get(&id).is_some_and(|h| h.is_alive()) {
+    if state
+        .running
+        .read()
+        .await
+        .get(&id)
+        .is_some_and(|h| h.is_alive())
+    {
         return Err(Error::AlreadyRunning);
     }
     let dir = server_dir(&state, &id)?;
@@ -199,7 +221,10 @@ pub async fn start_server(app: AppHandle, state: State<'_, AppState>, id: String
                 match events.recv().await {
                     Ok(event) => {
                         let exited = matches!(event, ServerEvent::Exited { .. });
-                        let payload = ServerEventPayload { server_id: server_id.clone(), event };
+                        let payload = ServerEventPayload {
+                            server_id: server_id.clone(),
+                            event,
+                        };
                         let _ = app.emit("server://event", payload);
                         if exited {
                             break;
@@ -241,13 +266,29 @@ pub async fn start_server(app: AppHandle, state: State<'_, AppState>, id: String
 
 #[tauri::command]
 pub async fn stop_server(state: State<'_, AppState>, id: String) -> CmdResult<()> {
-    let handle = state.running.read().await.get(&id).cloned().ok_or(Error::NotRunning)?;
+    let handle = state
+        .running
+        .read()
+        .await
+        .get(&id)
+        .cloned()
+        .ok_or(Error::NotRunning)?;
     handle.stop(Duration::from_secs(60)).await
 }
 
 #[tauri::command]
-pub async fn send_command(state: State<'_, AppState>, id: String, command: String) -> CmdResult<()> {
-    let handle = state.running.read().await.get(&id).cloned().ok_or(Error::NotRunning)?;
+pub async fn send_command(
+    state: State<'_, AppState>,
+    id: String,
+    command: String,
+) -> CmdResult<()> {
+    let handle = state
+        .running
+        .read()
+        .await
+        .get(&id)
+        .cloned()
+        .ok_or(Error::NotRunning)?;
     handle.send_command(&command).await
 }
 
@@ -283,7 +324,5 @@ fn open_path(app: &AppHandle, path: &std::path::Path) -> CmdResult<()> {
 }
 
 fn curseforge_missing() -> Error {
-    Error::InvalidConfig(
-        "CurseForge no está configurado: define MICRA_CURSEFORGE_API_KEY".into(),
-    )
+    Error::InvalidConfig("CurseForge no está configurado: define MICRA_CURSEFORGE_API_KEY".into())
 }
