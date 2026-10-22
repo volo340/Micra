@@ -14,6 +14,7 @@ pub mod i18n;
 pub mod import;
 pub mod java;
 pub mod net;
+pub mod notify;
 pub mod paths;
 pub mod providers;
 pub mod provision;
