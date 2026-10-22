@@ -106,6 +106,7 @@ Micra/
 ├─ scripts/install.sh            instalador de Linux (micra-install.sh)
 ├─ docs/ARCHITECTURE.md          este documento
 ├─ docs/DESIGN.md                logo, colores y reglas de la interfaz
+├─ docs/DEVELOPMENT.md           compilar, probar y publicar versiones
 ├─ crates/micra-core/            lógica de negocio, sin Tauri, con tests
 │  ├─ src/
 │  │  ├─ lib.rs, error.rs, paths.rs, http.rs, hardware.rs, net.rs
