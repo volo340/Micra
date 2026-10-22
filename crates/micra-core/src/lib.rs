@@ -11,6 +11,7 @@ pub mod fsutil;
 pub mod hardware;
 pub mod http;
 pub mod i18n;
+pub mod import;
 pub mod java;
 pub mod net;
 pub mod paths;

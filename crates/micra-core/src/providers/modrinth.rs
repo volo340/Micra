@@ -1,6 +1,8 @@
 //! Cliente de la API v2 de Modrinth (https://docs.modrinth.com/api/).
 //! No requiere clave, pero sí un User-Agent identificable (ver `http.rs`).
 
+use std::collections::HashMap;
+
 use serde::{Deserialize, Serialize};
 
 use crate::Result;
@@ -79,6 +81,28 @@ pub struct Version {
     pub loaders: Vec<String>,
     pub date_published: String,
     pub files: Vec<VersionFile>,
+    #[serde(default)]
+    pub dependencies: Vec<Dependency>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Dependency {
+    pub version_id: Option<String>,
+    pub project_id: Option<String>,
+    pub file_name: Option<String>,
+    /// required, optional, incompatible o embedded.
+    pub dependency_type: String,
+}
+
+/// Datos básicos de un proyecto para mostrarlo en la lista de mods.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Project {
+    pub id: String,
+    pub slug: String,
+    pub title: String,
+    pub icon_url: Option<String>,
+    #[serde(default)]
+    pub server_side: String,
 }
 
 impl Version {
@@ -142,14 +166,85 @@ impl ModrinthClient {
         game_version: Option<&str>,
         loader: Option<&str>,
     ) -> Result<Vec<Version>> {
+        let loaders: Vec<&str> = loader.into_iter().collect();
+        self.project_versions_any(id_or_slug, game_version, &loaders)
+            .await
+    }
+
+    /// Como `project_versions`, aceptando varios loaders (basta con uno).
+    pub async fn project_versions_any(
+        &self,
+        id_or_slug: &str,
+        game_version: Option<&str>,
+        loaders: &[&str],
+    ) -> Result<Vec<Version>> {
         let mut req = self.http.get(format!("{API}/project/{id_or_slug}/version"));
         if let Some(gv) = game_version {
             req = req.query(&[("game_versions", serde_json::to_string(&[gv])?)]);
         }
-        if let Some(l) = loader {
-            req = req.query(&[("loaders", serde_json::to_string(&[l])?)]);
+        if !loaders.is_empty() {
+            req = req.query(&[("loaders", serde_json::to_string(loaders)?)]);
         }
         Ok(req.send().await?.error_for_status()?.json().await?)
+    }
+
+    /// Identifica archivos por su hash: devuelve la versión de Modrinth de
+    /// cada uno (los que no están en Modrinth no aparecen).
+    pub async fn versions_by_hashes(&self, sha1s: &[String]) -> Result<HashMap<String, Version>> {
+        if sha1s.is_empty() {
+            return Ok(HashMap::new());
+        }
+        Ok(self
+            .http
+            .post(format!("{API}/version_files"))
+            .json(&serde_json::json!({ "hashes": sha1s, "algorithm": "sha1" }))
+            .send()
+            .await?
+            .error_for_status()?
+            .json()
+            .await?)
+    }
+
+    /// Última versión compatible de cada archivo (por su hash) para el loader
+    /// y la versión del juego indicados.
+    pub async fn latest_by_hashes(
+        &self,
+        sha1s: &[String],
+        loaders: &[&str],
+        game_version: &str,
+    ) -> Result<HashMap<String, Version>> {
+        if sha1s.is_empty() {
+            return Ok(HashMap::new());
+        }
+        Ok(self
+            .http
+            .post(format!("{API}/version_files/update"))
+            .json(&serde_json::json!({
+                "hashes": sha1s,
+                "algorithm": "sha1",
+                "loaders": loaders,
+                "game_versions": [game_version],
+            }))
+            .send()
+            .await?
+            .error_for_status()?
+            .json()
+            .await?)
+    }
+
+    pub async fn projects(&self, ids: &[String]) -> Result<Vec<Project>> {
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        Ok(self
+            .http
+            .get(format!("{API}/projects"))
+            .query(&[("ids", serde_json::to_string(ids)?)])
+            .send()
+            .await?
+            .error_for_status()?
+            .json()
+            .await?)
     }
 
     pub async fn version(&self, version_id: &str) -> Result<Version> {

@@ -263,9 +263,14 @@ impl Provisioner<'_> {
             ServerSource::Modrinth { version_id } => {
                 let version = self.modrinth.version(version_id).await?;
                 let pack_path = self.download_mrpack(&version).await?;
-                let info =
-                    mrpack::install_mrpack(self.http, &pack_path, dir, Some(&files_progress))
-                        .await?;
+                let info = mrpack::install_mrpack(
+                    self.http,
+                    &pack_path,
+                    dir,
+                    Some(&files_progress),
+                    &internal_paths(),
+                )
+                .await?;
                 let _ = tokio::fs::remove_file(&pack_path).await;
                 Content {
                     mc_version: info.mc_version,
@@ -286,12 +291,15 @@ impl Provisioner<'_> {
                 let cf = self.curseforge.ok_or_else(curseforge_missing)?;
                 let file = cf.file(*mod_id, *file_id).await?;
                 let server_pack = cf.server_pack_for(&file).await?;
-                let zip_path = self.paths.cache().join(&server_pack.file_name);
+                let zip_path = self.paths.cache().join(cache_name(&server_pack.file_name));
                 cf.download(&server_pack, &zip_path, None).await?;
                 let dir_clone = dir.to_path_buf();
                 let zip_clone = zip_path.clone();
                 let files = tokio::task::spawn_blocking(move || {
-                    archive::extract_zip(&zip_clone, &dir_clone, true)
+                    let protected = internal_paths();
+                    archive::extract_zip_filtered(&zip_clone, &dir_clone, true, &|rel| {
+                        mrpack::is_protected(rel, &protected)
+                    })
                 })
                 .await
                 .expect("la extracción no debería entrar en pánico")?;
@@ -339,25 +347,22 @@ impl Provisioner<'_> {
                 "Modrinth did not publish the modpack's hash, so it cannot be verified"
             ))
         })?;
-        let pack_path = self.paths.cache().join(&file.filename);
+        if !mrpack::is_allowed_url(&file.url) {
+            return Err(Error::DisallowedUrl(file.url.clone()));
+        }
+        let pack_path = self.paths.cache().join(cache_name(&file.filename));
         let expected = ExpectedHash::new(HashAlgo::Sha512, sha512);
         download_file(self.http, &file.url, &pack_path, Some(&expected), None).await?;
         Ok(pack_path)
     }
 
     pub async fn java_major_for(&self, mc_version: &str) -> u32 {
-        match mojang::fetch_version(self.http, mc_version).await {
-            Ok(details) => details.java_major(),
-            Err(e) => {
-                tracing::warn!("sin manifiesto de Mojang ({e}); usando heurística");
-                required_java_for(mc_version)
-            }
-        }
+        java_major_for(self.http, mc_version).await
     }
 
     /// Deja listo un server pack ya extraído: ejecuta el instalador que trae,
     /// usa el que ya viene instalado o instala el loader que declara.
-    async fn finish_server_pack(
+    pub(crate) async fn finish_server_pack(
         &self,
         dir: &Path,
         mc_version: &str,
@@ -390,6 +395,37 @@ impl Provisioner<'_> {
 
     fn unique_id(&self, name: &str) -> String {
         unique_id(self.paths, name)
+    }
+}
+
+/// Nombre seguro para guardar en la caché un archivo cuyo nombre viene de
+/// una API (sin rutas).
+pub(crate) fn cache_name(name: &str) -> String {
+    let base = name.rsplit(['/', '\\']).next().unwrap_or_default();
+    if base.is_empty() || base.starts_with('.') {
+        "download.bin".into()
+    } else {
+        base.to_string()
+    }
+}
+
+/// Archivos de Micra que ningún pack puede sobrescribir.
+pub fn internal_paths() -> Vec<String> {
+    vec![
+        crate::server::config::CONFIG_FILE.to_string(),
+        ".micra".to_string(),
+    ]
+}
+
+/// Java que pide una versión de Minecraft: el manifiesto de Mojang manda y
+/// la heurística es el respaldo sin conexión.
+pub async fn java_major_for(http: &reqwest::Client, mc_version: &str) -> u32 {
+    match mojang::fetch_version(http, mc_version).await {
+        Ok(details) => details.java_major(),
+        Err(e) => {
+            tracing::warn!("sin manifiesto de Mojang ({e}); usando heurística");
+            required_java_for(mc_version)
+        }
     }
 }
 
