@@ -55,6 +55,13 @@ async fn launch_command_and_stop() {
         },
         use_aikar_flags: true,
         extra_jvm_args: vec![],
+        backups: BackupPolicy::default(),
+        schedule: SchedulePolicy::default(),
+        network: NetworkPolicy::default(),
+        security: SecurityPolicy::default(),
+        map: MapConfig::default(),
+        source: None,
+        pending_owner: None,
     };
 
     let (server, mut events) = ServerHandle::launch(&cfg, dir.path(), &java).await.unwrap();
