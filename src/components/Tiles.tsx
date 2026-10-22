@@ -1,13 +1,14 @@
-import { useState, type ReactNode } from "react";
-import { Check, Copy, Cpu, Globe2, MemoryStick, Users } from "lucide-react";
+import type { ReactNode } from "react";
+import { AlertTriangle, CheckCircle2, Cpu, Gauge, MemoryStick, OctagonAlert, Users } from "lucide-react";
 import { Avatar } from "./Avatar";
 import { Sparkline } from "./Sparkline";
-import { formatCores, formatGb, formatPercent } from "../lib/format";
+import { useT } from "../i18n";
+import { formatCores, formatGb, formatPercent, formatTps } from "../lib/format";
 import type { StatsPoint } from "../lib/useAppData";
 
 export const STATS_WINDOW = 60;
 
-function Tile(props: { icon: ReactNode; label: string; aside?: string; action?: ReactNode; children: ReactNode }) {
+function Tile(props: { icon: ReactNode; label: string; aside?: string; children: ReactNode }) {
   return (
     <section className="card tile">
       <header className="tile-head">
@@ -20,7 +21,6 @@ function Tile(props: { icon: ReactNode; label: string; aside?: string; action?: 
             {props.aside}
           </span>
         )}
-        {props.action}
       </header>
       {props.children}
     </section>
@@ -28,12 +28,13 @@ function Tile(props: { icon: ReactNode; label: string; aside?: string; action?: 
 }
 
 export function CpuTile(props: { points: StatsPoint[]; live: boolean; cores: number[] | null; logicalCpus: number }) {
+  const t = useT();
   const last = props.points.at(-1);
   return (
     <Tile
       icon={<Cpu size={15} />}
-      label="CPU"
-      aside={props.cores ? `Núcleos ${formatCores(props.cores)}` : `${props.logicalCpus} hilos`}
+      label={t.tiles.cpu}
+      aside={props.cores ? t.common.cores(formatCores(props.cores)) : t.common.threads(props.logicalCpus)}
     >
       <div className="tile-value">{props.live && last ? formatPercent(last.cpu) : "—"}</div>
       <Sparkline
@@ -42,18 +43,19 @@ export function CpuTile(props: { points: StatsPoint[]; live: boolean; cores: num
         capacity={STATS_WINDOW}
         color="var(--series-cpu)"
         format={formatPercent}
-        label="Uso de CPU"
+        label={t.tiles.cpuChart}
       />
     </Tile>
   );
 }
 
 export function MemoryTile(props: { points: StatsPoint[]; live: boolean; maxMb: number }) {
+  const t = useT();
   const last = props.points.at(-1);
   const values = props.live ? props.points.map((p) => p.memMb) : [];
   const ratio = last && props.live ? Math.min(last.memMb / props.maxMb, 1) : 0;
   return (
-    <Tile icon={<MemoryStick size={15} />} label="Memoria" aside={`Límite ${formatGb(props.maxMb)}`}>
+    <Tile icon={<MemoryStick size={15} />} label={t.tiles.memory} aside={t.tiles.memoryLimit(formatGb(props.maxMb))}>
       <div className="tile-value">{props.live && last ? formatGb(last.memMb) : "—"}</div>
       <div
         className="meter"
@@ -61,7 +63,7 @@ export function MemoryTile(props: { points: StatsPoint[]; live: boolean; maxMb: 
         aria-valuemin={0}
         aria-valuemax={100}
         aria-valuenow={Math.round(ratio * 100)}
-        aria-label="Memoria usada sobre la asignada"
+        aria-label={t.tiles.memoryMeter}
       >
         <span style={{ width: `${ratio * 100}%` }} />
       </div>
@@ -71,18 +73,59 @@ export function MemoryTile(props: { points: StatsPoint[]; live: boolean; maxMb: 
         capacity={STATS_WINDOW}
         color="var(--series-ram)"
         format={formatGb}
-        label="Memoria usada"
+        label={t.tiles.memoryChart}
         height={40}
       />
     </Tile>
   );
 }
 
+type TpsState = "good" | "lag" | "heavy";
+
+const TPS_ICON = { good: CheckCircle2, lag: AlertTriangle, heavy: OctagonAlert };
+
+/** 20 TPS es el ritmo normal del juego; por debajo de 15 se nota mucho. */
+export const tpsState = (tps: number): TpsState => (tps >= 18 ? "good" : tps >= 15 ? "lag" : "heavy");
+
+export function TpsTile({ tps, live }: { tps: number | null; live: boolean }) {
+  const t = useT();
+  const state = live && tps !== null ? tpsState(tps) : null;
+  const Icon = state ? TPS_ICON[state] : null;
+  const ratio = live && tps !== null ? Math.min(tps / 20, 1) : 0;
+  return (
+    <Tile icon={<Gauge size={15} />} label={t.tiles.tps} aside={t.tiles.tpsIdeal}>
+      <div className="tile-value">{live && tps !== null ? formatTps(tps) : "—"}</div>
+      <div
+        className="meter"
+        data-level={state ?? "idle"}
+        role="meter"
+        aria-valuemin={0}
+        aria-valuemax={20}
+        aria-valuenow={live && tps !== null ? tps : 0}
+        aria-label={t.tiles.tps}
+      >
+        <span style={{ width: `${ratio * 100}%` }} />
+      </div>
+      <div className="tile-foot">
+        {state && Icon ? (
+          <span className="tps-state" data-state={state}>
+            <Icon size={14} />
+            {t.tiles.tpsStates[state]}
+          </span>
+        ) : (
+          <span className="subtle">{live ? t.tiles.tpsWaiting : t.tiles.serverOff}</span>
+        )}
+      </div>
+    </Tile>
+  );
+}
+
 export function PlayersTile(props: { players: string[]; live: boolean }) {
+  const t = useT();
   const shown = props.players.slice(0, 5);
   const extra = props.players.length - shown.length;
   return (
-    <Tile icon={<Users size={15} />} label="Jugadores">
+    <Tile icon={<Users size={15} />} label={t.tiles.players}>
       <div className="tile-value">{props.live ? props.players.length : "—"}</div>
       <div className="tile-foot">
         {props.players.length > 0 ? (
@@ -93,51 +136,9 @@ export function PlayersTile(props: { players: string[]; live: boolean }) {
             {extra > 0 && <span className="count">+{extra}</span>}
           </div>
         ) : (
-          <span className="subtle">{props.live ? "Nadie conectado todavía" : "El servidor está apagado"}</span>
+          <span className="subtle">{props.live ? t.tiles.nobodyYet : t.tiles.serverOff}</span>
         )}
       </div>
-    </Tile>
-  );
-}
-
-export function ConnectTile(props: { ip: string | null; port: number }) {
-  const [copied, setCopied] = useState(false);
-  const address = `${props.ip ?? "localhost"}:${props.port}`;
-
-  const copy = async () => {
-    try {
-      await navigator.clipboard.writeText(address);
-      setCopied(true);
-      window.setTimeout(() => setCopied(false), 1600);
-    } catch {
-      /* el portapapeles puede no estar disponible; la dirección sigue visible */
-    }
-  };
-
-  const label = copied ? "Dirección copiada" : "Copiar dirección";
-  return (
-    <Tile
-      icon={<Globe2 size={15} />}
-      label="Dirección para conectarse"
-      action={
-        <button
-          className="btn btn-ghost btn-icon btn-sm copy-btn"
-          data-done={copied || undefined}
-          onClick={copy}
-          title={label}
-          aria-label={label}
-        >
-          {copied ? <Check size={15} /> : <Copy size={15} />}
-        </button>
-      }
-    >
-      <div className="connect-address mono selectable" title={address}>
-        {address}
-      </div>
-      <p className="tile-note">
-        Funciona para quien esté en tu misma red (Wi-Fi o cable). La conexión desde internet llegará con la apertura
-        automática de puertos.
-      </p>
     </Tile>
   );
 }

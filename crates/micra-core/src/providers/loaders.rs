@@ -4,6 +4,12 @@
 //! - Fabric: lanzador de servidor de meta.fabricmc.net (descarga vanilla solo).
 //! - Forge / NeoForge: se descarga el instalador oficial y se ejecuta con
 //!   `--installServer` usando el Java gestionado.
+//!
+//! Todo se verifica antes de usarse: el `server.jar` con el SHA-1 del
+//! manifiesto de Mojang y los instaladores con el `.sha1` que publica su
+//! repositorio Maven (si falta, no se instala). El lanzador de Fabric lo
+//! genera al vuelo meta.fabricmc.net y no tiene hash publicado: se descarga
+//! solo por HTTPS desde ese dominio oficial.
 
 use std::path::Path;
 
@@ -14,7 +20,7 @@ use crate::java::JavaRuntime;
 use crate::providers::mojang;
 use crate::server::config::{LaunchTarget, Loader};
 use crate::server::detect::detect_launch_target;
-use crate::{Error, Result};
+use crate::{tr, Error, Result};
 
 pub async fn install_loader(
     http: &reqwest::Client,
@@ -35,17 +41,18 @@ pub async fn install_loader(
             let url = format!(
                 "https://maven.minecraftforge.net/net/minecraftforge/forge/{full}/forge-{full}-installer.jar"
             );
-            run_installer(http, &url, server_dir, java, progress).await
+            download_and_run_installer(http, &url, server_dir, java, progress).await
         }
         Loader::NeoForge { version } => {
             let url = format!(
                 "https://maven.neoforged.net/releases/net/neoforged/neoforge/{version}/neoforge-{version}-installer.jar"
             );
-            run_installer(http, &url, server_dir, java, progress).await
+            download_and_run_installer(http, &url, server_dir, java, progress).await
         }
-        Loader::Quilt { .. } => Err(Error::UnsupportedPlatform(
-            "Quilt todavía no está soportado".into(),
-        )),
+        Loader::Quilt { .. } => Err(Error::UnsupportedPlatform(tr!(
+            "Quilt todavía no está soportado",
+            "Quilt is not supported yet"
+        ))),
     }
 }
 
@@ -59,7 +66,7 @@ async fn install_vanilla(
     let server = details
         .downloads
         .server
-        .ok_or_else(|| Error::NotFound(format!("server.jar para {mc_version}")))?;
+        .ok_or_else(|| Error::NotFound(format!("server.jar ({mc_version})")))?;
     let expected = ExpectedHash::new(HashAlgo::Sha1, server.sha1);
     download_file(
         http,
@@ -107,7 +114,7 @@ pub async fn latest_fabric_loader(http: &reqwest::Client, mc_version: &str) -> R
         .find(|e| e.loader.stable)
         .or(entries.first())
         .map(|e| e.loader.version.clone())
-        .ok_or_else(|| Error::NotFound(format!("Fabric para Minecraft {mc_version}")))
+        .ok_or_else(|| Error::NotFound(format!("Fabric (Minecraft {mc_version})")))
 }
 
 async fn install_fabric(
@@ -127,7 +134,7 @@ async fn install_fabric(
     let installer = installers
         .iter()
         .find(|i| i.stable)
-        .ok_or_else(|| Error::NotFound("instalador estable de Fabric".into()))?;
+        .ok_or_else(|| Error::NotFound("Fabric installer".into()))?;
     let url = format!(
         "https://meta.fabricmc.net/v2/versions/loader/{mc_version}/{loader_version}/{}/server/jar",
         installer.version
@@ -137,43 +144,99 @@ async fn install_fabric(
     Ok(LaunchTarget::Jar { path: jar.into() })
 }
 
-async fn run_installer(
+/// Descarga el instalador y su `.sha1` del mismo repositorio Maven, y solo
+/// lo ejecuta si coinciden.
+async fn download_and_run_installer(
     http: &reqwest::Client,
     url: &str,
     server_dir: &Path,
     java: &JavaRuntime,
     progress: Option<Progress<'_>>,
 ) -> Result<LaunchTarget> {
+    let sha1 = maven_sha1(http, url).await?;
     let installer = server_dir.join("micra-installer.jar");
-    download_file(http, url, &installer, None, progress).await?;
+    let expected = ExpectedHash::new(HashAlgo::Sha1, sha1);
+    download_file(http, url, &installer, Some(&expected), progress).await?;
+    let result = run_installer(&installer, server_dir, java).await;
+    let _ = tokio::fs::remove_file(&installer).await;
+    result
+}
 
+/// Hash publicado junto a un artefacto Maven (`<url>.sha1`).
+async fn maven_sha1(http: &reqwest::Client, url: &str) -> Result<String> {
+    let missing = || {
+        Error::Api(tr!(
+            "el repositorio no publica el hash del instalador, así que no se puede verificar y no se instalará",
+            "the repository does not publish the installer's hash, so it cannot be verified and will not be installed"
+        ))
+    };
+    let res = http.get(format!("{url}.sha1")).send().await?;
+    if !res.status().is_success() {
+        return Err(missing());
+    }
+    let text = res.text().await?;
+    parse_sha1(&text).ok_or_else(missing)
+}
+
+/// El archivo `.sha1` puede traer solo el hash o "hash  nombre".
+fn parse_sha1(text: &str) -> Option<String> {
+    let hash = text.split_whitespace().next()?.to_ascii_lowercase();
+    (hash.len() == 40 && hash.bytes().all(|b| b.is_ascii_hexdigit())).then_some(hash)
+}
+
+/// Ejecuta un instalador de Forge/NeoForge ya presente en disco (descargado
+/// y verificado por nosotros, o incluido en un server pack verificado) con
+/// `--installServer` y devuelve cómo arrancar el resultado.
+pub async fn run_installer(
+    installer: &Path,
+    server_dir: &Path,
+    java: &JavaRuntime,
+) -> Result<LaunchTarget> {
     let mut cmd = tokio::process::Command::new(&java.java_bin);
     cmd.arg("-jar")
-        .arg(&installer)
+        .arg(installer)
         .arg("--installServer")
         .current_dir(server_dir);
     #[cfg(windows)]
     cmd.creation_flags(crate::server::launcher::CREATE_NO_WINDOW);
     let output = cmd.output().await?;
-    let _ = tokio::fs::remove_file(&installer).await;
-    let _ = tokio::fs::remove_file(server_dir.join("micra-installer.jar.log")).await;
+    let mut log = installer.as_os_str().to_os_string();
+    log.push(".log");
+    let _ = tokio::fs::remove_file(&log).await;
 
     if !output.status.success() {
-        let tail = String::from_utf8_lossy(&output.stdout);
-        let tail: String = tail
-            .lines()
-            .rev()
-            .take(15)
-            .collect::<Vec<_>>()
-            .into_iter()
-            .rev()
-            .collect::<Vec<_>>()
-            .join("\n");
-        return Err(Error::Api(format!(
-            "el instalador del loader falló:\n{tail}"
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let lines: Vec<&str> = stdout.lines().collect();
+        let tail = lines[lines.len().saturating_sub(15)..].join("\n");
+        return Err(Error::Api(tr!(
+            "el instalador del loader falló:\n{tail}",
+            "the loader installer failed:\n{tail}"
         )));
     }
     detect_launch_target(server_dir)?.ok_or_else(|| {
-        Error::NotFound("jar o archivo de argumentos tras instalar el loader".into())
+        Error::NotFound(tr!(
+            "jar o archivo de argumentos tras instalar el loader",
+            "jar or arguments file after installing the loader"
+        ))
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_sha1;
+
+    #[test]
+    fn maven_sha1_files() {
+        let h = "0123456789abcdef0123456789ABCDEF01234567";
+        assert_eq!(
+            parse_sha1(h).as_deref(),
+            Some(h.to_ascii_lowercase().as_str())
+        );
+        assert_eq!(
+            parse_sha1(&format!("{h}  forge-installer.jar\n")).as_deref(),
+            Some(h.to_ascii_lowercase().as_str())
+        );
+        assert_eq!(parse_sha1("<html>404</html>"), None);
+        assert_eq!(parse_sha1(""), None);
+    }
 }

@@ -7,10 +7,10 @@ use std::path::Path;
 use futures_util::{stream, TryStreamExt};
 use serde::Deserialize;
 
-use crate::archive::{extract_zip_prefix, safe_join};
+use crate::archive::{extract_zip_prefix_filtered, list_zip_prefix, safe_join};
 use crate::download::{download_file, ExpectedHash, HashAlgo};
 use crate::server::config::Loader;
-use crate::{Error, Result};
+use crate::{tr, Error, Result};
 
 /// Dominios desde los que la especificación permite descargar archivos.
 const ALLOWED_HOSTS: &[&str] = &[
@@ -56,31 +56,37 @@ pub struct PackInfo {
     pub version: String,
     pub mc_version: String,
     pub loader: Loader,
+    /// Rutas relativas de todo lo que instaló el pack (para poder quitarlo
+    /// al actualizar).
+    pub files: Vec<String>,
 }
 
 /// Progreso: (archivos completados, total de archivos).
 pub type FileProgress<'a> = &'a (dyn Fn(usize, usize) + Send + Sync);
 
+/// `protected`: rutas (o carpetas) de la carpeta del servidor que el pack no
+/// puede sobrescribir, como el mundo o `server.properties` al actualizar.
 pub async fn install_mrpack(
     http: &reqwest::Client,
     mrpack: &Path,
     server_dir: &Path,
     progress: Option<FileProgress<'_>>,
+    protected: &[String],
 ) -> Result<PackInfo> {
     let index = read_index(mrpack).await?;
     if index.game != "minecraft" {
-        return Err(Error::InvalidConfig(format!(
-            "juego no soportado: {}",
-            index.game
+        let game = &index.game;
+        return Err(Error::InvalidConfig(tr!(
+            "juego no soportado: {game}",
+            "unsupported game: {game}"
         )));
     }
 
     // Archivos sueltos: solo los que el servidor necesita.
-    let files: Vec<&MrpackFile> = index
-        .files
-        .iter()
-        .filter(|f| f.env.as_ref().is_none_or(|e| e.server != "unsupported"))
+    let files: Vec<&MrpackFile> = server_files(&index)
+        .filter(|f| !is_protected(&f.path, protected))
         .collect();
+    let mut installed: Vec<String> = files.iter().map(|f| f.path.replace('\\', "/")).collect();
     let total = files.len();
     let done = std::sync::atomic::AtomicUsize::new(0);
 
@@ -97,7 +103,13 @@ pub async fn install_mrpack(
                 let expected = match (file.hashes.get("sha512"), file.hashes.get("sha1")) {
                     (Some(h), _) => ExpectedHash::new(HashAlgo::Sha512, h),
                     (None, Some(h)) => ExpectedHash::new(HashAlgo::Sha1, h),
-                    _ => return Err(Error::InvalidConfig(format!("{} no tiene hash", file.path))),
+                    _ => {
+                        let path = &file.path;
+                        return Err(Error::InvalidConfig(tr!(
+                            "{path} no tiene hash: no se puede verificar",
+                            "{path} has no hash: it cannot be verified"
+                        )));
+                    }
                 };
                 download_file(http, url, &dest, Some(&expected), None).await?;
                 let n = done.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
@@ -113,24 +125,74 @@ pub async fn install_mrpack(
     // para que tenga prioridad.
     let mrpack_owned = mrpack.to_owned();
     let dir = server_dir.to_owned();
-    tokio::task::spawn_blocking(move || -> Result<()> {
-        extract_zip_prefix(&mrpack_owned, "overrides/", &dir)?;
-        extract_zip_prefix(&mrpack_owned, "server-overrides/", &dir)?;
-        Ok(())
+    let protected_owned = protected.to_vec();
+    let overrides = tokio::task::spawn_blocking(move || -> Result<Vec<String>> {
+        let skip = |rel: &str| is_protected(rel, &protected_owned);
+        let mut written = extract_zip_prefix_filtered(&mrpack_owned, "overrides/", &dir, &skip)?;
+        written.extend(extract_zip_prefix_filtered(
+            &mrpack_owned,
+            "server-overrides/",
+            &dir,
+            &skip,
+        )?);
+        Ok(written)
     })
     .await
     .expect("la extracción no debería entrar en pánico")?;
+    installed.extend(overrides);
+    installed.sort();
+    installed.dedup();
 
-    let mc_version = index
-        .dependencies
-        .get("minecraft")
-        .cloned()
-        .ok_or_else(|| Error::InvalidConfig("el pack no declara versión de Minecraft".into()))?;
+    let mc_version = mc_version_of(&index)?;
     Ok(PackInfo {
         name: index.name,
         version: index.version_id,
         mc_version,
         loader: loader_from_dependencies(&index.dependencies),
+        files: installed,
+    })
+}
+
+/// Versión de Minecraft, loader y lista de archivos de un `.mrpack` sin
+/// instalarlo (para comparar versiones al actualizar).
+pub async fn inspect(mrpack: &Path) -> Result<PackInfo> {
+    let index = read_index(mrpack).await?;
+    let mut files: Vec<String> = server_files(&index)
+        .map(|f| f.path.replace('\\', "/"))
+        .collect();
+    let path = mrpack.to_owned();
+    let overrides = tokio::task::spawn_blocking(move || -> Result<Vec<String>> {
+        let mut list = list_zip_prefix(&path, "overrides/")?;
+        list.extend(list_zip_prefix(&path, "server-overrides/")?);
+        Ok(list)
+    })
+    .await
+    .expect("la lectura no debería entrar en pánico")?;
+    files.extend(overrides);
+    files.sort();
+    files.dedup();
+    Ok(PackInfo {
+        mc_version: mc_version_of(&index)?,
+        loader: loader_from_dependencies(&index.dependencies),
+        name: index.name,
+        version: index.version_id,
+        files,
+    })
+}
+
+fn server_files(index: &MrpackIndex) -> impl Iterator<Item = &MrpackFile> {
+    index
+        .files
+        .iter()
+        .filter(|f| f.env.as_ref().is_none_or(|e| e.server != "unsupported"))
+}
+
+fn mc_version_of(index: &MrpackIndex) -> Result<String> {
+    index.dependencies.get("minecraft").cloned().ok_or_else(|| {
+        Error::InvalidConfig(tr!(
+            "el pack no declara versión de Minecraft",
+            "the pack does not declare a Minecraft version"
+        ))
     })
 }
 
@@ -163,7 +225,20 @@ fn loader_from_dependencies(deps: &HashMap<String, String>) -> Loader {
     }
 }
 
-fn is_allowed_url(url: &str) -> bool {
+/// `true` si `rel` es una de las rutas protegidas o está dentro de una.
+pub fn is_protected(rel: &str, protected: &[String]) -> bool {
+    let rel = rel.replace('\\', "/");
+    let rel = rel.trim_start_matches("./");
+    protected.iter().any(|p| {
+        rel.eq_ignore_ascii_case(p)
+            || (rel.len() > p.len()
+                && rel.as_bytes()[p.len()] == b'/'
+                && rel[..p.len()].eq_ignore_ascii_case(p))
+    })
+}
+
+/// Solo HTTPS y solo los dominios que permite la especificación.
+pub fn is_allowed_url(url: &str) -> bool {
     let Ok(parsed) = reqwest::Url::parse(url) else {
         return false;
     };
@@ -187,6 +262,16 @@ mod tests {
         assert!(!is_allowed_url(
             "https://cdn.modrinth.com.evil.example/a.jar"
         ));
+    }
+
+    #[test]
+    fn protected_paths() {
+        let protected = vec!["world".to_string(), "server.properties".to_string()];
+        assert!(is_protected("world/level.dat", &protected));
+        assert!(is_protected("World/region/r.0.0.mca", &protected));
+        assert!(is_protected("server.properties", &protected));
+        assert!(!is_protected("worldedit/config.yml", &protected));
+        assert!(!is_protected("config/server.properties.bak", &protected));
     }
 
     #[test]

@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useState, type ReactNode } from "react";
 import { AlertCircle, CheckCircle2, Info, X } from "lucide-react";
+import { useT } from "../i18n";
 
 type Tone = "success" | "error" | "info";
 
@@ -18,9 +19,10 @@ let seq = 0;
 const ICONS = { success: CheckCircle2, error: AlertCircle, info: Info };
 
 export function ToastProvider({ children }: { children: ReactNode }) {
+  const t = useT();
   const [toasts, setToasts] = useState<Toast[]>([]);
 
-  const dismiss = useCallback((id: number) => setToasts((ts) => ts.filter((t) => t.id !== id)), []);
+  const dismiss = useCallback((id: number) => setToasts((ts) => ts.filter((x) => x.id !== id)), []);
 
   const push = useCallback<Push>(
     (toast) => {
@@ -35,16 +37,20 @@ export function ToastProvider({ children }: { children: ReactNode }) {
     <ToastContext.Provider value={push}>
       {children}
       <div className="toast-stack" role="status" aria-live="polite">
-        {toasts.map((t) => {
-          const Icon = ICONS[t.tone];
+        {toasts.map((toast) => {
+          const Icon = ICONS[toast.tone];
           return (
-            <div key={t.id} className="toast" data-tone={t.tone}>
+            <div key={toast.id} className="toast" data-tone={toast.tone}>
               <Icon size={18} className="toast-icon" />
               <div className="toast-body">
-                <div className="toast-title">{t.title}</div>
-                {t.message && <div className="toast-message">{t.message}</div>}
+                <div className="toast-title">{toast.title}</div>
+                {toast.message && <div className="toast-message">{toast.message}</div>}
               </div>
-              <button className="btn btn-ghost btn-icon btn-sm" onClick={() => dismiss(t.id)} aria-label="Cerrar aviso">
+              <button
+                className="btn btn-ghost btn-icon btn-sm"
+                onClick={() => dismiss(toast.id)}
+                aria-label={t.common.closeNotice}
+              >
                 <X size={14} />
               </button>
             </div>

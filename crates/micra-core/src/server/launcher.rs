@@ -65,6 +65,9 @@ pub fn build_command(
     use std::process::Stdio;
 
     let mut cmd = tokio::process::Command::new(&java.java_bin);
+    if cfg.security.sandbox {
+        apply_sandbox_dirs(&mut cmd, cfg, server_dir);
+    }
     cmd.args(build_args(cfg))
         .current_dir(server_dir)
         .env("JAVA_HOME", &java.home)
@@ -78,6 +81,35 @@ pub fn build_command(
         super::affinity::apply_before_spawn(&mut cmd, cores);
     }
     cmd
+}
+
+/// Con el aislamiento activo, la "carpeta personal" y la temporal del
+/// servidor pasan a ser subcarpetas suyas: lo que un mod quiera guardar ahí
+/// se queda dentro del servidor (y dentro de lo que Landlock permite).
+fn apply_sandbox_dirs(cmd: &mut tokio::process::Command, cfg: &ServerConfig, server_dir: &Path) {
+    use crate::server::sandbox::{HOME_DIR, TMP_DIR};
+
+    let home = server_dir.join(HOME_DIR);
+    let tmp = server_dir.join(TMP_DIR);
+    cmd.arg(format!("-Djava.io.tmpdir={}", tmp.display()))
+        .arg(format!("-Duser.home={}", home.display()));
+    // Sin esto la JVM intenta escribir en /tmp/hsperfdata_<usuario>.
+    let perf = "-XX:+PerfDisableSharedMem";
+    if !cfg.use_aikar_flags && !cfg.extra_jvm_args.iter().any(|a| a == perf) {
+        cmd.arg(perf);
+    }
+    #[cfg(unix)]
+    {
+        cmd.env("HOME", &home)
+            .env("TMPDIR", &tmp)
+            .env("XDG_CONFIG_HOME", home.join(".config"))
+            .env("XDG_CACHE_HOME", home.join(".cache"))
+            .env("XDG_DATA_HOME", home.join(".local/share"));
+    }
+    #[cfg(windows)]
+    {
+        cmd.env("TEMP", &tmp).env("TMP", &tmp);
+    }
 }
 
 #[cfg(test)]
@@ -107,6 +139,13 @@ mod tests {
             },
             use_aikar_flags: false,
             extra_jvm_args: vec![],
+            backups: BackupPolicy::default(),
+            schedule: SchedulePolicy::default(),
+            network: NetworkPolicy::default(),
+            security: SecurityPolicy::default(),
+            map: MapConfig::default(),
+            source: None,
+            pending_owner: None,
         };
         let args = build_args(&cfg);
         assert_eq!(args[0], "-Xms1024M");

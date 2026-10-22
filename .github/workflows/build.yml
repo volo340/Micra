@@ -3,7 +3,17 @@
 # - En cada pull request: tests del núcleo y los instaladores como artefactos
 #   descargables (pestaña Actions > ejecución > Artifacts).
 # - Al subir una etiqueta vX.Y.Z: además crea un borrador de release en GitHub
-#   con el .exe de Windows, el AppImage/.deb/.rpm de Linux y micra-install.sh.
+#   con el .exe de Windows, el AppImage/.deb/.rpm de Linux, micra-install.sh y
+#   el latest.json de las actualizaciones automáticas.
+#
+# Secretos opcionales (Settings > Secrets and variables > Actions); sin ellos
+# todo compila igual, solo se salta lo que dependa de cada uno:
+# - TAURI_SIGNING_PRIVATE_KEY: firma las actualizaciones automáticas.
+# - WINDOWS_CERTIFICATE (.pfx en base64) y WINDOWS_CERTIFICATE_PASSWORD, o
+#   AZURE_CLIENT_ID, AZURE_CLIENT_SECRET, AZURE_TENANT_ID, AZURE_SIGNING_ENDPOINT,
+#   AZURE_SIGNING_ACCOUNT y AZURE_SIGNING_PROFILE: firman el .exe.
+# - MICRA_CURSEFORGE_API_KEY: activa la búsqueda de CurseForge.
+# Detalles en docs/DEVELOPMENT.md.
 name: Build
 
 on:
@@ -33,8 +43,14 @@ jobs:
           - name: linux
             os: ubuntu-22.04
     runs-on: ${{ matrix.os }}
+    env:
+      # Las firmas solo se hacen al publicar una versión o al lanzarlo a mano.
+      SIGNED_BUILD: ${{ github.event_name != 'pull_request' }}
+      HAS_UPDATER_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY != '' }}
+      HAS_WINDOWS_PFX: ${{ secrets.WINDOWS_CERTIFICATE != '' }}
+      HAS_AZURE_SIGNING: ${{ secrets.AZURE_CLIENT_SECRET != '' }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Dependencias de compilación (Linux)
         if: runner.os == 'Linux'
@@ -44,7 +60,7 @@ jobs:
             libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev patchelf \
             libfuse2 xdg-utils
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
@@ -59,11 +75,61 @@ jobs:
       - name: Dependencias del frontend
         run: npm ci
 
+      # Con un certificado .pfx: se importa en el almacén del usuario y Tauri
+      # firma con signtool usando su huella.
+      - name: Certificado de firma de Windows (.pfx)
+        if: runner.os == 'Windows' && env.SIGNED_BUILD == 'true' && env.HAS_WINDOWS_PFX == 'true'
+        shell: pwsh
+        env:
+          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+        run: |
+          $pfx = Join-Path $env:RUNNER_TEMP "micra-certificado.pfx"
+          [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:WINDOWS_CERTIFICATE))
+          $password = ConvertTo-SecureString -String $env:WINDOWS_CERTIFICATE_PASSWORD -Force -AsPlainText
+          $cert = Import-PfxCertificate -FilePath $pfx -CertStoreLocation Cert:\CurrentUser\My -Password $password |
+            Where-Object { $_.HasPrivateKey } | Select-Object -First 1
+          Remove-Item $pfx
+          if (-not $cert) { throw "El .pfx no contiene ningún certificado con clave privada" }
+          @{ bundle = @{ windows = @{
+              certificateThumbprint = $cert.Thumbprint
+              digestAlgorithm = "sha256"
+              timestampUrl = "http://timestamp.digicert.com"
+          } } } | ConvertTo-Json -Depth 4 | Set-Content (Join-Path $env:RUNNER_TEMP "firma.json")
+
+      # Con Azure Trusted Signing (la clave nunca sale de Azure).
+      - name: Firma con Azure Trusted Signing
+        if: runner.os == 'Windows' && env.SIGNED_BUILD == 'true' && env.HAS_AZURE_SIGNING == 'true' && env.HAS_WINDOWS_PFX != 'true'
+        shell: bash
+        env:
+          AZURE_SIGNING_ENDPOINT: ${{ secrets.AZURE_SIGNING_ENDPOINT }}
+        run: |
+          cargo install trusted-signing-cli --version 0.11.0 --locked
+          printf '{"bundle":{"windows":{"signCommand":"trusted-signing-cli -e %s -d Micra %%1"}}}' \
+            "$AZURE_SIGNING_ENDPOINT" > "$RUNNER_TEMP/firma.json"
+
       - name: Compilar instaladores
-        run: npm run tauri build
+        shell: bash
+        run: |
+          args=()
+          # Las actualizaciones automáticas solo aceptan paquetes firmados con la clave de Micra.
+          if [ "$SIGNED_BUILD" = true ] && [ "$HAS_UPDATER_KEY" = true ]; then
+            args+=(--config '{"bundle":{"createUpdaterArtifacts":true}}')
+          fi
+          if [ -f "$RUNNER_TEMP/firma.json" ]; then
+            args+=(--config "$RUNNER_TEMP/firma.json")
+          fi
+          npm run tauri build -- "${args[@]}"
         env:
           # Opcional: si existe el secreto, la búsqueda de CurseForge queda activada.
           MICRA_CURSEFORGE_API_KEY: ${{ secrets.MICRA_CURSEFORGE_API_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_TRUSTED_SIGNING_ACCOUNT_NAME: ${{ secrets.AZURE_SIGNING_ACCOUNT }}
+          AZURE_CERTIFICATE_PROFILE_NAME: ${{ secrets.AZURE_SIGNING_PROFILE }}
 
       - name: Reunir instaladores
         shell: bash
@@ -76,12 +142,20 @@ jobs:
                  target/release/bundle/rpm/*.rpm)
           [ ${#files[@]} -gt 0 ] || { echo "No se generó ningún instalador"; exit 1; }
           cp "${files[@]}" out/
+          # Firmas de las actualizaciones automáticas, si se generaron.
+          sigs=(target/release/bundle/nsis/*.exe.sig target/release/bundle/appimage/*.AppImage.sig)
+          [ ${#sigs[@]} -eq 0 ] || cp "${sigs[@]}" out/
+          if [ "$RUNNER_OS" = Windows ]; then
+            # Comprobación de la firma del .exe (solo informativa).
+            powershell -NoProfile -Command \
+              'Get-ChildItem out\*.exe | ForEach-Object { "{0}: {1}" -f $_.Name, (Get-AuthenticodeSignature $_.FullName).Status }'
+          fi
           if [ "$RUNNER_OS" = Linux ]; then
             cp scripts/install.sh out/micra-install.sh
           fi
           ls -la out
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: Micra-${{ matrix.name }}
           path: out/*
@@ -94,9 +168,9 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           path: out
           merge-multiple: true
@@ -104,9 +178,35 @@ jobs:
       - name: Fijar la versión en el instalador de Linux
         run: |
           sed "s/^DEFAULT_VERSION=.*/DEFAULT_VERSION=\"${GITHUB_REF_NAME}\"/" scripts/install.sh > out/micra-install.sh
-          ls -la out
 
-      - uses: softprops/action-gh-release@v2
+      # Lo que lee Micra para saber si hay una versión nueva: la dirección de cada
+      # paquete y su firma. Se publica junto al resto al publicar el borrador.
+      - name: latest.json para las actualizaciones automáticas
+        run: |
+          shopt -s nullglob
+          exe=(out/*-setup.exe)
+          appimage=(out/*.AppImage)
+          if [ ${#exe[@]} -ne 1 ] || [ ${#appimage[@]} -ne 1 ] || [ ! -f "${exe[0]}.sig" ] || [ ! -f "${appimage[0]}.sig" ]; then
+            echo "::warning::Sin firmas del actualizador (¿falta el secreto TAURI_SIGNING_PRIVATE_KEY?): esta versión no llegará por actualización automática."
+            exit 0
+          fi
+          base="https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}"
+          jq -n \
+            --arg version "${GITHUB_REF_NAME#v}" \
+            --arg date "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            --arg win_url "$base/$(basename "${exe[0]}")" \
+            --arg win_sig "$(tr -d '\r\n' < "${exe[0]}.sig")" \
+            --arg linux_url "$base/$(basename "${appimage[0]}")" \
+            --arg linux_sig "$(tr -d '\r\n' < "${appimage[0]}.sig")" \
+            '{version: $version, notes: "", pub_date: $date, platforms: {
+                "windows-x86_64": {url: $win_url, signature: $win_sig},
+                "linux-x86_64": {url: $linux_url, signature: $linux_sig}}}' > out/latest.json
+          cat out/latest.json
+
+      - name: Contenido de la versión
+        run: ls -la out
+
+      - uses: softprops/action-gh-release@v3
         with:
           draft: true
           generate_release_notes: true

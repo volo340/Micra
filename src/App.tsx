@@ -1,52 +1,79 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Logo } from "./components/Logo";
-import { Sidebar, type View } from "./components/Sidebar";
+import { Sidebar, type ServerTab, type View } from "./components/Sidebar";
 import { ToastProvider, useToast } from "./components/Toasts";
+import { I18nProvider, useI18n } from "./i18n";
 import { api, errorMessage } from "./lib/api";
 import { useAppData } from "./lib/useAppData";
-import type { ServerConfig } from "./lib/types";
-import { Dashboard } from "./views/Dashboard";
+import type { AppUpdate, ServerConfig } from "./lib/types";
 import { Home } from "./views/Home";
+import { ServerView } from "./views/server/ServerView";
 import { Settings } from "./views/Settings";
 import { Wizard } from "./views/wizard/Wizard";
 
 export default function App() {
   return (
-    <ToastProvider>
-      <Shell />
-    </ToastProvider>
+    <I18nProvider>
+      <ToastProvider>
+        <Shell />
+      </ToastProvider>
+    </I18nProvider>
   );
 }
 
 function Shell() {
   const toast = useToast();
+  const { t, setLang } = useI18n();
   const data = useAppData(toast);
   const [view, setView] = useState<View>({ kind: "home" });
-  const [busy, setBusy] = useState<Record<string, boolean>>({});
+  const [pending, setPending] = useState<Record<string, boolean>>({});
+  const [update, setUpdate] = useState<AppUpdate | null>(null);
   const autoSelected = useRef(false);
+  const mainRef = useRef<HTMLElement>(null);
 
   const onError = useCallback(
-    (e: unknown) => toast({ tone: "error", title: "Algo ha fallado", message: errorMessage(e) }),
-    [toast],
+    (e: unknown) => toast({ tone: "error", title: t.common.somethingFailed, message: errorMessage(e) }),
+    [toast, t],
   );
+
+  // El idioma lo decide la app (el elegido en Ajustes o el del sistema).
+  const language = data.appInfo?.language;
+  useEffect(() => {
+    if (language) setLang(language);
+  }, [language, setLang]);
+
+  // Buscar una versión nueva de Micra al abrir, si está activado.
+  useEffect(() => {
+    api
+      .getSettings()
+      .then((v) => (v.settings.updates.autoCheck ? api.checkAppUpdate() : null))
+      .then((found) => found && setUpdate(found))
+      .catch(() => {});
+  }, []);
 
   // Al abrir la app con servidores ya creados, mostrar directamente el primero.
   useEffect(() => {
     if (!autoSelected.current && data.servers?.length) {
       autoSelected.current = true;
-      setView((v) => (v.kind === "home" ? { kind: "server", id: data.servers![0].config.id } : v));
+      setView((v) => (v.kind === "home" ? { kind: "server", id: data.servers![0].config.id, tab: "overview" } : v));
     }
   }, [data.servers]);
 
+  // Cada pantalla y cada pestaña empiezan desde arriba.
+  const screen = view.kind === "server" ? `${view.id}/${view.tab}` : view.kind;
+  useEffect(() => {
+    mainRef.current?.scrollTo({ top: 0 });
+  }, [screen]);
+
   const run = async (id: string, action: () => Promise<void>) => {
-    setBusy((b) => ({ ...b, [id]: true }));
+    setPending((b) => ({ ...b, [id]: true }));
     try {
       await action();
     } catch (e) {
       onError(e);
       data.refresh();
     } finally {
-      setBusy((b) => ({ ...b, [id]: false }));
+      setPending((b) => ({ ...b, [id]: false }));
     }
   };
 
@@ -59,12 +86,11 @@ function Shell() {
 
   const stop = (id: string) => run(id, () => api.stopServer(id));
 
+  // La vigilancia del servidor lo vuelve a encender en cuanto termina de apagarse.
   const restart = (id: string) =>
     run(id, async () => {
-      await api.stopServer(id);
+      await api.restartServer(id);
       data.resetStats(id);
-      data.patch(id, (s) => ({ ...s, status: "starting" }));
-      await api.startServer(id);
     });
 
   const command = (id: string, cmd: string) => {
@@ -74,12 +100,12 @@ function Shell() {
 
   const onCreated = async (config: ServerConfig, startNow: boolean) => {
     await data.refresh();
-    setView({ kind: "server", id: config.id });
-    toast({ tone: "success", title: "Servidor creado", message: `«${config.name}» ya aparece en tu lista.` });
+    setView({ kind: "server", id: config.id, tab: "overview" });
+    toast({ tone: "success", title: t.server.created, message: t.server.createdMessage(config.name) });
     if (startNow) start(config.id);
   };
 
-  if (data.servers === null) {
+  if (data.servers === null || data.appInfo === undefined) {
     return (
       <div className="splash">
         <Logo size={72} className="splash-logo" />
@@ -95,28 +121,37 @@ function Shell() {
       <Wizard
         hardware={data.hardware}
         appInfo={data.appInfo}
+        usedPorts={data.servers.map((s) => s.config.port)}
         onCancel={() => setView(selected ? view : { kind: "home" })}
         onCreated={onCreated}
       />
     );
   } else if (view.kind === "settings") {
-    content = <Settings hardware={data.hardware} appInfo={data.appInfo} onError={onError} />;
-  } else if (selected) {
+    content = (
+      <Settings
+        hardware={data.hardware}
+        appInfo={data.appInfo}
+        update={update}
+        onUpdateFound={setUpdate}
+        onAppInfoChanged={data.refreshAppInfo}
+        onError={onError}
+      />
+    );
+  } else if (selected && view.kind === "server") {
     const id = selected.config.id;
     content = (
-      <Dashboard
+      <ServerView
         server={selected}
-        lines={data.logs[id] ?? []}
-        points={data.stats[id] ?? []}
-        hardware={data.hardware}
-        network={data.network}
-        busy={Boolean(busy[id])}
+        data={data}
+        tab={view.tab}
+        pending={Boolean(pending[id])}
+        onTab={(tab: ServerTab) => setView({ kind: "server", id, tab })}
         onStart={() => start(id)}
         onStop={() => stop(id)}
         onRestart={() => restart(id)}
         onCommand={(cmd) => command(id, cmd)}
-        onClear={() => data.clearLogs(id)}
-        onOpenFolder={() => api.openServerFolder(id).catch(onError)}
+        onOpenAppSettings={() => setView({ kind: "settings" })}
+        onError={onError}
       />
     );
   } else {
@@ -125,8 +160,16 @@ function Shell() {
 
   return (
     <div className="app">
-      <Sidebar servers={data.servers} view={view} hardware={data.hardware} onNavigate={setView} />
-      <main className="main">{content}</main>
+      <Sidebar
+        servers={data.servers}
+        view={view}
+        hardware={data.hardware}
+        update={update?.version ?? null}
+        onNavigate={setView}
+      />
+      <main className="main" ref={mainRef}>
+        {content}
+      </main>
     </div>
   );
 }

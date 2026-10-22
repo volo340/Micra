@@ -8,6 +8,7 @@ import {
   OctagonX,
   TerminalSquare,
 } from "lucide-react";
+import { useT } from "../i18n";
 import type { LogLine } from "../lib/logs";
 
 interface Props {
@@ -18,6 +19,7 @@ interface Props {
 }
 
 export function Console({ lines, live, onCommand, onClear }: Props) {
+  const t = useT();
   const body = useRef<HTMLDivElement>(null);
   const [follow, setFollow] = useState(true);
   const [command, setCommand] = useState("");
@@ -64,17 +66,17 @@ export function Console({ lines, live, onCommand, onClear }: Props) {
       <header className="card-header">
         <span className="card-title">
           <TerminalSquare size={16} />
-          Consola
+          {t.console.title}
         </span>
         <div className="console-tools">
           {warnings > 0 && (
-            <span className="console-count" data-tone="warn" title="Avisos">
+            <span className="console-count" data-tone="warn" title={t.console.warnings}>
               <AlertTriangle size={13} />
               {warnings}
             </span>
           )}
           {errors > 0 && (
-            <span className="console-count" data-tone="error" title="Errores">
+            <span className="console-count" data-tone="error" title={t.console.errors}>
               <OctagonX size={13} />
               {errors}
             </span>
@@ -82,12 +84,12 @@ export function Console({ lines, live, onCommand, onClear }: Props) {
           {!follow && (
             <button className="btn btn-ghost btn-sm" onClick={() => setFollow(true)}>
               <ArrowDownToLine size={14} />
-              Ir al final
+              {t.console.toBottom}
             </button>
           )}
           <button className="btn btn-ghost btn-sm" onClick={onClear} disabled={!lines.length}>
             <Eraser size={14} />
-            Limpiar
+            {t.console.clear}
           </button>
         </div>
       </header>
@@ -98,8 +100,8 @@ export function Console({ lines, live, onCommand, onClear }: Props) {
             <span className="empty-icon">
               <TerminalSquare size={20} />
             </span>
-            <strong>{live ? "Esperando mensajes del servidor…" : "La consola está vacía"}</strong>
-            <span>{live ? "" : "Enciende el servidor para ver aquí lo que va ocurriendo."}</span>
+            <strong>{live ? t.console.waiting : t.console.empty}</strong>
+            <span>{live ? "" : t.console.emptyHint}</span>
           </div>
         ) : (
           lines.map((l) => (
@@ -120,21 +122,17 @@ export function Console({ lines, live, onCommand, onClear }: Props) {
           value={command}
           onChange={(e) => setCommand(e.target.value)}
           onKeyDown={onKeyDown}
-          placeholder={
-            live
-              ? "Escribe un comando: say hola, op Steve, time set day…"
-              : "Enciende el servidor para escribir comandos"
-          }
+          placeholder={live ? t.console.placeholder : t.console.placeholderOff}
           disabled={!live}
           spellCheck={false}
           autoComplete="off"
-          aria-label="Comando para el servidor"
+          aria-label={t.console.inputLabel}
         />
         <button
           className="btn btn-ghost btn-icon btn-sm"
           type="submit"
           disabled={!live || !command.trim()}
-          aria-label="Enviar comando"
+          aria-label={t.console.send}
         >
           <CornerDownLeft size={15} />
         </button>
