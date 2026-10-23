@@ -528,6 +528,12 @@ export const de: Dict = {
     whitelistOff: "Ohne Whitelist kann jeder beitreten, der die Adresse kennt.",
     rconNote: "Micra setzt ein langes Passwort und öffnet diesen Port nie zum Internet.",
     queryNote: "Gibt jedem, der fragt, Infos über den Server; zum Spielen nicht nötig.",
+    gamemodeForAll: "Gilt bei jedem Beitreten für alle, auch für Spieler, die schon gespielt haben.",
+    gamemodeNewOnly:
+      "Ändert nur den Modus von Spielern, die zum ersten Mal beitreten: Wer schon gespielt hat, behält seinen.",
+    gamemodeApplyAll: "Für alle übernehmen",
+    forceGamemodeNote:
+      "Beim Beitreten wechselt jeder Spieler zurück in den Modus des Servers, auch wenn du seinen Modus mit /gamemode geändert hast.",
     rconPasswordHint: "Wenn du es leer lässt oder es zu kurz ist, setzt Micra eines mit 32 Zeichen.",
     portElsewhere: "Wird unter Netzwerk geändert",
     save: "Eigenschaften speichern",

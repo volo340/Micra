@@ -924,7 +924,7 @@ mockIPC(
       // La app
       case "app_info":
         return {
-          version: "0.2.0",
+          version: "0.2.1",
           dataDir: DATA_DIR,
           curseforgeEnabled: secrets.curseforgeApiKey,
           language: settings.language ?? systemLang,

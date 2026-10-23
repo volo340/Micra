@@ -514,6 +514,12 @@ export const en: Dict = {
     whitelistOff: "Without a whitelist anyone who knows the address can join.",
     rconNote: "Micra sets a long password and never opens this port to the internet.",
     queryNote: "Gives server information to anyone who asks; it isn't needed to play.",
+    gamemodeForAll: "Applies to everyone each time they join, including players who have played before.",
+    gamemodeNewOnly:
+      "Only changes the mode of players joining for the first time: those who have played before keep theirs.",
+    gamemodeApplyAll: "Apply to everyone",
+    forceGamemodeNote:
+      "On joining, every player goes back to the server's game mode, even if you changed theirs with /gamemode.",
     rconPasswordHint: "If you leave it empty or it's short, Micra sets a 32-character one.",
     portElsewhere: "Changed under Network",
     save: "Save properties",

@@ -469,13 +469,17 @@ fn spawn_reader(
                         });
                     }
                 }
+                // Minecraft avisa más de una vez de cada entrada y salida
+                // (`logged in` y `joined the game`): solo cuenta la primera.
                 Some(LineInfo::Joined(name)) => {
-                    players.lock().unwrap().insert(name.clone());
-                    let _ = events.send(ServerEvent::PlayerJoined { name });
+                    if players.lock().unwrap().insert(name.clone()) {
+                        let _ = events.send(ServerEvent::PlayerJoined { name });
+                    }
                 }
                 Some(LineInfo::Left(name)) => {
-                    players.lock().unwrap().remove(&name);
-                    let _ = events.send(ServerEvent::PlayerLeft { name });
+                    if players.lock().unwrap().remove(&name) {
+                        let _ = events.send(ServerEvent::PlayerLeft { name });
+                    }
                 }
                 Some(LineInfo::Rejected(name, reason)) => {
                     let _ = events.send(ServerEvent::JoinRejected { name, reason });
@@ -503,9 +507,15 @@ fn intercept(interceptors: &Interceptors, line: &str) -> bool {
     false
 }
 
-/// Texto de una línea del log sin el prefijo `[hora] [hilo/NIVEL]: `.
+/// Prefijo que Minecraft 26.3 y posteriores ponen en el log a los mensajes del
+/// sistema: entradas y salidas, muertes, respuestas a comandos...
+const SYSTEM_CHAT: &str = "System chat: ";
+
+/// Texto de una línea del log sin el prefijo `[hora] [hilo/NIVEL]: ` ni el
+/// `System chat: ` de las versiones nuevas.
 pub fn message_of(line: &str) -> &str {
-    line.split_once("]: ").map_or(line, |(_, m)| m).trim()
+    let msg = line.split_once("]: ").map_or(line, |(_, m)| m).trim();
+    msg.strip_prefix(SYSTEM_CHAT).unwrap_or(msg)
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -527,18 +537,39 @@ fn valid_name(name: &str) -> Option<String> {
 /// Interpreta las líneas estándar del log de Minecraft, p. ej.:
 /// `[12:00:00] [Server thread/INFO]: Done (3.2s)! For help, type "help"`
 /// `[12:00:05] [Server thread/INFO]: Steve joined the game`
+/// `[12:00:05] [Server thread/INFO]: System chat: Steve joined the game` (26.3+)
 fn parse_line(line: &str) -> Option<LineInfo> {
     let msg = message_of(line);
     if msg.starts_with("Done (") && msg.contains("For help") {
         return Some(LineInfo::Ready);
     }
     if let Some(rest) = msg.strip_suffix(" joined the game") {
-        return valid_name(rest).map(LineInfo::Joined);
+        // `Steve (formerly known as Steve2) joined the game` tras cambiar de nombre.
+        let name = rest
+            .strip_suffix(')')
+            .and_then(|r| r.split_once(" (formerly known as "))
+            .map_or(rest, |(name, _)| name);
+        return valid_name(name).map(LineInfo::Joined);
     }
     if let Some(rest) = msg.strip_suffix(" left the game") {
         return valid_name(rest).map(LineInfo::Left);
     }
-    parse_rejection(msg)
+    parse_rejection(msg).or_else(|| parse_connection(msg))
+}
+
+/// Líneas que el servidor escribe al entrar y salir aunque no lo anuncie en el
+/// chat (hay mods y plugins que ocultan esos avisos):
+/// `Steve[/1.2.3.4:5] logged in with entity id 7 at (0.5, 64.0, 0.5)`
+/// `Steve lost connection: Disconnected`
+fn parse_connection(msg: &str) -> Option<LineInfo> {
+    if let Some((head, _)) = msg.split_once("] logged in with entity id ") {
+        let (name, _) = head.split_once('[')?;
+        return valid_name(name).map(LineInfo::Joined);
+    }
+    // Quien aún no había entrado sale como `Steve (/1.2.3.4:5) lost connection`
+    // o `/1.2.3.4:5 lost connection`, que no son nombres válidos.
+    let (name, _) = msg.split_once(" lost connection: ")?;
+    valid_name(name).map(LineInfo::Left)
 }
 
 /// Intentos de entrada rechazados, en los formatos de distintas versiones:
@@ -587,6 +618,73 @@ mod tests {
         // Un mensaje de chat no debe confundirse con una entrada.
         assert_eq!(
             parse_line("[12:02:00] [Server thread/INFO]: <Steve> hola joined the game"),
+            None
+        );
+    }
+
+    #[test]
+    fn parses_system_chat_lines() {
+        // Minecraft 26.3 antepone `System chat: ` a los avisos del servidor.
+        assert_eq!(
+            parse_line("[09:06:29] [Server thread/INFO]: System chat: Mokkq joined the game"),
+            Some(LineInfo::Joined("Mokkq".into()))
+        );
+        assert_eq!(
+            parse_line("[09:10:02] [Server thread/INFO]: System chat: Mokkq left the game"),
+            Some(LineInfo::Left("Mokkq".into()))
+        );
+        assert_eq!(
+            parse_line(
+                "[09:06:29] [Server thread/INFO]: System chat: Alex (formerly known as Alex2) joined the game"
+            ),
+            Some(LineInfo::Joined("Alex".into()))
+        );
+        assert_eq!(
+            message_of("[09:11:00] [Server thread/INFO]: System chat: Saved the game"),
+            "Saved the game"
+        );
+        // Ni el chat de un jugador ni un `say` pueden hacerse pasar por el sistema.
+        assert_eq!(
+            parse_line(
+                "[09:12:00] [Server thread/INFO]: <Steve> System chat: Alex joined the game"
+            ),
+            None
+        );
+        assert_eq!(
+            parse_line("[09:12:00] [Server thread/INFO]: [Steve] System chat: Alex left the game"),
+            None
+        );
+    }
+
+    #[test]
+    fn parses_connection_lines() {
+        assert_eq!(
+            parse_line("[09:06:29] [Server thread/INFO]: Mokkq[/192.168.1.20:51234] logged in with entity id 42 at ([minecraft:overworld]-3.5, 64.0, 12.5)"),
+            Some(LineInfo::Joined("Mokkq".into()))
+        );
+        assert_eq!(
+            parse_line("[09:06:29] [Server thread/INFO]: Alex[/[2001:db8::1]:4000] logged in with entity id 1 at (0.0, 64.0, 0.0)"),
+            Some(LineInfo::Joined("Alex".into()))
+        );
+        assert_eq!(
+            parse_line("[09:10:02] [Server thread/INFO]: Mokkq lost connection: Disconnected"),
+            Some(LineInfo::Left("Mokkq".into()))
+        );
+        // Conexiones que nunca llegaron a entrar en el mundo.
+        assert_eq!(
+            parse_line("[09:10:02] [Server thread/INFO]: /192.168.1.20:51234 lost connection: Disconnected"),
+            None
+        );
+        assert_eq!(
+            parse_line("[09:10:02] [Server thread/INFO]: Steve (/192.168.1.20:51234) lost connection: Disconnected"),
+            None
+        );
+        assert_eq!(
+            parse_line("[09:10:02] [Server thread/INFO]: <Steve> Alex lost connection: jaja"),
+            None
+        );
+        assert_eq!(
+            parse_line("[09:10:02] [Server thread/INFO]: <Steve> Alex[/1.2.3.4:5] logged in with entity id 1 at (0, 0, 0)"),
             None
         );
     }
