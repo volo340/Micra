@@ -148,6 +148,7 @@ function warning(key: string, value: string, t: Dict): { tone: "critical" | "war
   if (key === "white-list" && value === "false") return { tone: "warning", text: t.properties.whitelistOff };
   if (key === "enable-rcon" && value === "true") return { tone: "info", text: t.properties.rconNote };
   if (key === "enable-query" && value === "true") return { tone: "info", text: t.properties.queryNote };
+  if (key === "force-gamemode" && value === "true") return { tone: "info", text: t.properties.forceGamemodeNote };
   return null;
 }
 
@@ -178,7 +179,14 @@ export function PropertiesEditor({ serverId, view, running, onSaved, onError }: 
   const fields = GROUPS.flatMap((g) => g.fields);
   const errors = fields.filter((f) => f.key in changes && invalid(f, changes[f.key]));
   const dirty = Object.keys(changes).length > 0;
-  const set = (key: string, value: string) => setDraft((d) => ({ ...d, [key]: value }));
+  const set = (key: string, value: string) =>
+    setDraft((d) => {
+      const next = { ...d, [key]: value };
+      // Sin force-gamemode el modo nuevo solo llega a quien entra por primera
+      // vez, y quien cambia el modo del mundo espera que cambie el de todos.
+      if (key === "gamemode") next["force-gamemode"] = value === base.gamemode ? base["force-gamemode"] : "true";
+      return next;
+    });
 
   const save = async () => {
     setSaving(true);
@@ -292,6 +300,17 @@ export function PropertiesEditor({ serverId, view, running, onSaved, onError }: 
             {note.text}
           </span>
         )}
+        {field.key === "gamemode" &&
+          (draft["force-gamemode"] === "true" ? (
+            <span className="prop-note">{t.properties.gamemodeForAll}</span>
+          ) : (
+            <span className="prop-note">
+              {t.properties.gamemodeNewOnly}{" "}
+              <button type="button" className="link-button" onClick={() => set("force-gamemode", "true")}>
+                {t.properties.gamemodeApplyAll}
+              </button>
+            </span>
+          ))}
       </div>
     );
   };

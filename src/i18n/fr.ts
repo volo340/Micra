@@ -531,6 +531,12 @@ export const fr: Dict = {
     whitelistOff: "Sans liste blanche, toute personne qui connaît l’adresse peut entrer.",
     rconNote: "Micra définit un long mot de passe et n’ouvre jamais ce port sur Internet.",
     queryNote: "Donne des informations sur le serveur à qui les demande ; inutile pour jouer.",
+    gamemodeForAll: "S’applique à tout le monde à chaque connexion, y compris à ceux qui avaient déjà joué.",
+    gamemodeNewOnly:
+      "Ne change que le mode des joueurs qui se connectent pour la première fois : les autres gardent le leur.",
+    gamemodeApplyAll: "Appliquer à tous",
+    forceGamemodeNote:
+      "À la connexion, chaque joueur revient au mode du serveur, même si vous avez changé le sien avec /gamemode.",
     rconPasswordHint: "S’il est vide ou trop court, Micra en définit un de 32 caractères.",
     portElsewhere: "Se modifie dans Réseau",
     save: "Enregistrer les propriétés",

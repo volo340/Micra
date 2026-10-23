@@ -519,6 +519,11 @@ export const pt: Dict = {
     whitelistOff: "Sem lista de permissões, qualquer um que saiba o endereço pode entrar.",
     rconNote: "O Micra define uma senha longa e nunca abre esta porta para a internet.",
     queryNote: "Dá informações do servidor a quem pedir; não é necessário para jogar.",
+    gamemodeForAll: "Vale para todos sempre que entram, inclusive para quem já tinha jogado.",
+    gamemodeNewOnly: "Só muda o modo de quem entra pela primeira vez: quem já tinha jogado continua no seu.",
+    gamemodeApplyAll: "Aplicar a todos",
+    forceGamemodeNote:
+      "Ao entrar, cada jogador volta ao modo do servidor, mesmo que você tenha mudado o dele com /gamemode.",
     rconPasswordHint: "Se você deixar vazia ou for curta, o Micra define uma de 32 caracteres.",
     portElsewhere: "Muda-se em Rede",
     save: "Salvar propriedades",
