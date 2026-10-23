@@ -14,6 +14,14 @@ use crate::{Error, Result};
 const API: &str = "https://api.curseforge.com/v1";
 const MINECRAFT_GAME_ID: u32 = 432;
 
+/// `modLoaderType` de CurseForge, nombre en Modrinth y etiqueta de CurseForge.
+const LOADERS: &[(u8, &str, &str)] = &[
+    (1, "forge", "Forge"),
+    (4, "fabric", "Fabric"),
+    (5, "quilt", "Quilt"),
+    (6, "neoforge", "NeoForge"),
+];
+
 /// IDs de clase de CurseForge para Minecraft.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
@@ -65,7 +73,47 @@ pub struct CfMod {
     pub logo: Option<CfLogo>,
     #[serde(default)]
     pub latest_files: Vec<CfFile>,
+    #[serde(default)]
+    pub latest_files_indexes: Vec<CfFileIndex>,
     pub allow_mod_distribution: Option<bool>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CfFileIndex {
+    #[serde(default)]
+    pub mod_loader: Option<u8>,
+}
+
+impl CfMod {
+    /// Loaders de sus archivos recientes, con los nombres de Modrinth.
+    pub fn loaders(&self) -> Vec<&'static str> {
+        let by_id = self
+            .latest_files_indexes
+            .iter()
+            .filter_map(|i| LOADERS.iter().find(|(id, ..)| Some(*id) == i.mod_loader));
+        // `game_versions` mezcla versiones del juego con loaders ("Forge").
+        let by_label = self
+            .latest_files
+            .iter()
+            .flat_map(|f| &f.game_versions)
+            .filter_map(|v| {
+                LOADERS
+                    .iter()
+                    .find(|(.., label)| label.eq_ignore_ascii_case(v))
+            });
+        let mut out: Vec<&'static str> = by_id.chain(by_label).map(|(_, name, _)| *name).collect();
+        out.sort_unstable();
+        out.dedup();
+        out
+    }
+
+    /// Si es de alguno de estos loaders. Los pocos que no dicen el suyo se
+    /// quedan: su paquete de servidor trae el loader que necesitan.
+    pub fn matches_loaders(&self, wanted: &[&str]) -> bool {
+        let own = self.loaders();
+        own.is_empty() || own.iter().any(|l| wanted.contains(l))
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -161,11 +209,14 @@ impl CurseForgeClient {
         Ok(res.error_for_status()?.json().await?)
     }
 
+    /// Con `loaders` (nombres de Modrinth: "forge", "neoforge", "fabric")
+    /// solo salen proyectos de esos loaders.
     pub async fn search(
         &self,
         query: &str,
         class: CfClass,
         game_version: Option<&str>,
+        loaders: &[&str],
         index: u32,
         page_size: u32,
     ) -> Result<CfSearchResponse> {
@@ -181,9 +232,32 @@ impl CurseForgeClient {
         if let Some(gv) = game_version {
             params.push(("gameVersion", gv.to_string()));
         }
-        let env: Envelope<Vec<CfMod>> = self.get("/mods/search", &params).await?;
+        let labels: Vec<&str> = LOADERS
+            .iter()
+            .filter(|(_, name, _)| loaders.contains(name))
+            .map(|(.., label)| *label)
+            .collect();
+        let mut found = None;
+        if !labels.is_empty() {
+            let mut filtered = params.clone();
+            filtered.push(("modLoaderTypes", serde_json::to_string(&labels)?));
+            match self.get::<Vec<CfMod>>("/mods/search", &filtered).await {
+                Ok(env) => found = Some(env),
+                // Si la API no acepta el filtro, se filtra aquí.
+                Err(Error::Http(e)) if e.status() == Some(reqwest::StatusCode::BAD_REQUEST) => {}
+                Err(e) => return Err(e),
+            }
+        }
+        let env: Envelope<Vec<CfMod>> = match found {
+            Some(env) => env,
+            None => self.get("/mods/search", &params).await?,
+        };
+        let mut data = env.data;
+        if !loaders.is_empty() {
+            data.retain(|m| m.matches_loaders(loaders));
+        }
         Ok(CfSearchResponse {
-            data: env.data,
+            data,
             pagination: env.pagination,
         })
     }
@@ -236,5 +310,60 @@ impl CurseForgeClient {
         };
         let expected = file.sha1().map(|h| ExpectedHash::new(HashAlgo::Sha1, h));
         download_file(&self.http, &url, dest, expected.as_ref(), progress).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn pack(indexes: &[u8], labels: &[&str]) -> CfMod {
+        CfMod {
+            id: 1,
+            name: "Pack".into(),
+            slug: "pack".into(),
+            summary: String::new(),
+            download_count: 0.0,
+            logo: None,
+            latest_files: vec![CfFile {
+                id: 2,
+                mod_id: 1,
+                display_name: "Pack 1.0".into(),
+                file_name: "pack.zip".into(),
+                download_url: None,
+                game_versions: labels.iter().map(|l| l.to_string()).collect(),
+                server_pack_file_id: None,
+                is_server_pack: None,
+                hashes: vec![],
+                file_length: 0,
+            }],
+            latest_files_indexes: indexes
+                .iter()
+                .map(|id| CfFileIndex {
+                    mod_loader: Some(*id),
+                })
+                .collect(),
+            allow_mod_distribution: Some(true),
+        }
+    }
+
+    #[test]
+    fn loaders_of_a_project() {
+        let forge = pack(&[1], &["1.20.1", "Forge"]);
+        assert_eq!(forge.loaders(), vec!["forge"]);
+        assert!(forge.matches_loaders(&["forge", "neoforge"]));
+        assert!(!forge.matches_loaders(&["fabric"]));
+
+        let neo = pack(&[6], &["1.21.1"]);
+        assert_eq!(neo.loaders(), vec!["neoforge"]);
+        assert!(neo.matches_loaders(&["forge", "neoforge"]));
+
+        let fabric = pack(&[], &["1.21.1", "Fabric", "Quilt"]);
+        assert_eq!(fabric.loaders(), vec!["fabric", "quilt"]);
+        assert!(fabric.matches_loaders(&["fabric"]));
+        assert!(!fabric.matches_loaders(&["forge", "neoforge"]));
+
+        // Sin datos de loader no se descarta.
+        assert!(pack(&[], &["1.20.1"]).matches_loaders(&["fabric"]));
     }
 }

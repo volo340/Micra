@@ -3,7 +3,7 @@ import { CoresField, MemoryField, PortField } from "../../components/ResourceFie
 import { useT } from "../../i18n";
 import { validPlayerName } from "../../lib/serverSettings";
 import type { HardwareInfo } from "../../lib/types";
-import { isModpack, type Draft } from "./draft";
+import { isModpack, modsToInstall, type Draft } from "./draft";
 
 interface Props {
   draft: Draft;
@@ -14,7 +14,14 @@ interface Props {
 export function ResourcesStep({ draft, hardware, onChange }: Props) {
   const t = useT();
   const cpus = hardware?.logicalCpus ?? 4;
-  const modded = isModpack(draft.kind) || (draft.analysis?.modCount ?? 0) > 0;
+  const memoryHint =
+    isModpack(draft) || (draft.analysis?.modCount ?? 0) > 0
+      ? t.wizard.memoryModpack
+      : draft.kind === "forge"
+        ? t.wizard.memoryForge
+        : modsToInstall(draft).length > 0
+          ? t.wizard.memoryMods
+          : t.wizard.memoryVanilla;
   const owner = draft.owner.trim();
 
   return (
@@ -62,7 +69,7 @@ export function ResourcesStep({ draft, hardware, onChange }: Props) {
       <MemoryField
         value={draft.maxMb}
         hardware={hardware}
-        hint={modded ? t.wizard.memoryModpack : t.wizard.memoryVanilla}
+        hint={memoryHint}
         onChange={(maxMb) => onChange({ maxMb })}
       />
 

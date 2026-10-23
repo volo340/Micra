@@ -85,13 +85,15 @@ Montar un servidor de Minecraft suele obligar a descargar archivos a mano,
 instalar la versión correcta de Java, editar ficheros de configuración y
 abrir una consola. Micra lo hace todo por ti desde una sola ventana:
 
-- **Crea un servidor en cuatro pasos.** Eliges el tipo (Vanilla, Fabric o un
-  modpack), la versión de Minecraft, el nombre y la memoria, y Micra lo
-  descarga y lo deja listo para encender. Si ya tienes un servidor, elige su
-  carpeta: Micra lo copia, detecta la versión y los mods, y lo deja listo.
-- **Busca modpacks por ti.** Busca por nombre o por tema y elige entre los
-  modpacks de Modrinth y CurseForge. Micra descarga solo lo que necesita el
-  servidor e instala el loader que use (Fabric, Forge o NeoForge).
+- **Crea un servidor en pocos pasos.** Eliges el tipo (Vanilla, Fabric o
+  Forge/NeoForge), la versión de Minecraft y los mods que quieras, o un
+  modpack ya hecho; luego el nombre y la memoria, y Micra lo descarga y lo
+  deja listo para encender. Si ya tienes un servidor, elige su carpeta: Micra
+  lo copia, detecta la versión y los mods, y lo deja listo.
+- **Busca mods y modpacks por ti.** Busca por nombre o por tema entre los
+  mods de Modrinth y los modpacks de Modrinth y CurseForge; solo salen los que
+  valen para el tipo de servidor que elegiste. Micra descarga solo lo que
+  necesita el servidor e instala el loader que use (Fabric, Forge o NeoForge).
 - **Instala Java solo.** Cada versión de Minecraft necesita un Java distinto.
   Micra descarga el correcto y lo guarda en su propia carpeta, sin tocar el
   Java de tu sistema.
@@ -113,8 +115,10 @@ abrir una consola. Micra lo hace todo por ti desde una sola ventana:
   tiempo (avisando antes en el chat) y, si quieres, apaga el servidor cuando
   no queda nadie.
 - **Ajustes de Minecraft sin editar archivos.** Dificultad, modo de juego,
-  distancia de visión, mensaje de la lista de servidores y el resto de
-  `server.properties`, con una explicación en cada opción.
+  modo extremo, distancia de visión, mensaje de la lista de servidores y el
+  resto de `server.properties`, con una explicación en cada opción. En las
+  versiones nuevas, el PvP, los monstruos, el Nether y los bloques de comandos
+  se aplican como reglas del juego, que es como los entiende Minecraft.
 - **Mods y modpacks al día.** Busca e instala mods de Modrinth que valen para
   tu servidor, te avisa cuando hay versiones nuevas y actualiza el modpack
   entero conservando tu mundo y los mods que añadiste tú.

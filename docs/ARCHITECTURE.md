@@ -72,7 +72,10 @@ aislado en un crate sin Tauri (`micra-core`) que se prueba con `cargo test`.
 1. La interfaz manda un `NewServerRequest` (nombre, fuente, RAM, núcleos,
    puerto, EULA aceptado). Se valida **antes** de descargar nada.
 2. Se obtiene el contenido:
-   - Vanilla/Fabric: versión elegida.
+   - Vanilla, Fabric, Forge o NeoForge: versión elegida. El asistente solo
+     ofrece las versiones que tienen ese loader (meta.fabricmc.net, las
+     promociones de Forge y el Maven de NeoForge) y usa la última versión
+     estable del loader.
    - Modrinth: se descarga el `.mrpack`, se bajan solo los archivos con
      `env.server != "unsupported"` (8 en paralelo, verificados con SHA-512 y
      solo desde dominios permitidos), y se aplican `overrides/` y
@@ -91,6 +94,9 @@ aislado en un crate sin Tauri (`micra-core`) que se prueba con `cargo test`.
 6. Escribe `eula.txt`, `server.properties` (puerto, MOTD y valores seguros:
    `online-mode`, lista blanca obligatoria, RCON y query apagados) y
    `micra.json`.
+7. Si en el asistente se eligieron mods sueltos, la interfaz los instala uno
+   a uno desde Modrinth (con sus dependencias) cuando el servidor ya existe;
+   el que falla se avisa al final y no deshace el servidor.
 
 *Importar* sigue el mismo camino con una carpeta ya existente: la copia a la
 carpeta de servidores (la original no se toca), detecta versión, loader, mods
@@ -108,6 +114,11 @@ a tiempo. Al cerrar la app se apagan todos los servidores de forma ordenada.
 Antes de arrancar, el supervisor (`src-tauri/src/supervisor.rs`) comprueba que
 el puerto esté libre y haya RAM suficiente, deja `server.properties` al día y
 analiza los mods en busca de malware conocido; si encuentra algo, no arranca.
+También aplica al mundo lo que `server.properties` ya no controla: el modo
+extremo de un mundo ya creado se escribe en su `level.dat` (`nbt.rs`,
+`server/world.rs`), y desde 1.21.9 el PvP, los monstruos, el Nether y los
+bloques de comandos son reglas del juego que se envían con `gamerule` al
+arrancar o al cambiarlas (`server/gamerules.rs`).
 El proceso se lanza con permisos mínimos (Landlock en Linux, Job Object en
 Windows). Mientras funciona, el supervisor mide CPU, RAM y TPS, guarda un
 punto de estadísticas por minuto, bloquea IPs que fallan demasiados intentos,
@@ -135,6 +146,7 @@ Micra/
 │  │  ├─ notify.rs               textos de los avisos y webhook de Discord
 │  │  ├─ download.rs             descargas en streaming + SHA-1/256/512
 │  │  ├─ archive.rs              ZIP / tar.gz con protección zip-slip
+│  │  ├─ nbt.rs                  leer y escribir level.dat (NBT con gzip)
 │  │  ├─ provision.rs            orquestación del asistente
 │  │  ├─ import.rs               importar un servidor existente
 │  │  ├─ java/                   JavaManager y API de Eclipse Temurin
@@ -151,6 +163,8 @@ Micra/
 │  │     ├─ schedule.rs          reinicios programados y apagado sin jugadores
 │  │     ├─ players.rs           lista blanca, ops, baneos
 │  │     ├─ properties.rs        server.properties: lectura, validación, escritura
+│  │     ├─ gamerules.rs         reglas del juego según la versión
+│  │     ├─ world.rs             modo extremo y reglas guardadas en el mundo
 │  │     ├─ mods.rs, pack.rs     mods de Modrinth y actualización de modpacks
 │  │     ├─ map.rs               BlueMap
 │  │     ├─ ports.rs, version.rs

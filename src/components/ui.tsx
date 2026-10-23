@@ -75,7 +75,7 @@ export function SwitchRow(props: {
 /** Grupo de opciones excluyentes con aspecto de pestañas pequeñas. */
 export function Segmented<T extends string>(props: {
   value: T;
-  options: { value: T; label: string }[];
+  options: { value: T; label: string; disabled?: boolean }[];
   onChange: (value: T) => void;
   label: string;
 }) {
@@ -88,6 +88,7 @@ export function Segmented<T extends string>(props: {
           role="radio"
           aria-checked={props.value === o.value}
           data-selected={props.value === o.value || undefined}
+          disabled={o.disabled}
           onClick={() => props.onChange(o.value)}
         >
           {o.label}

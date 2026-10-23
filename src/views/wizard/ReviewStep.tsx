@@ -1,8 +1,19 @@
-import { Cpu, ExternalLink, FolderInput, Gamepad2, Hash, MemoryStick, Package, Type, UserRound } from "lucide-react";
+import {
+  Cpu,
+  ExternalLink,
+  FolderInput,
+  Gamepad2,
+  Hash,
+  MemoryStick,
+  Package,
+  Puzzle,
+  Type,
+  UserRound,
+} from "lucide-react";
 import { useT } from "../../i18n";
 import { api } from "../../lib/api";
-import { formatCores, formatGb, loaderLabel } from "../../lib/format";
-import type { Draft } from "./draft";
+import { formatCores, formatGb, loaderLabel, loaderName } from "../../lib/format";
+import { isModpack, modLoader, modsToInstall, type Draft } from "./draft";
 
 interface Props {
   draft: Draft;
@@ -13,17 +24,22 @@ export function ReviewStep({ draft, onChange }: Props) {
   const t = useT();
   const analysis = draft.analysis;
   const version = analysis?.mcVersion ?? draft.mcVersion;
+  const modpack = isModpack(draft) ? draft.pack : null;
+  // Con los mods sueltos, el loader exacto (NeoForge o Forge) ya está elegido.
+  const loader = modpack ? null : modLoader(draft);
+  const mods = modsToInstall(draft);
   const rows = [
     { icon: Type, label: t.wizard.name, value: draft.name.trim() },
-    { icon: Package, label: t.wizard.type, value: t.wizard.kinds[draft.kind].title },
+    { icon: Package, label: t.wizard.type, value: loader ? loaderName(loader) : t.wizard.kinds[draft.kind].title },
     ...(analysis ? [{ icon: FolderInput, label: t.wizard.folder, value: analysis.path }] : []),
-    draft.pack
-      ? { icon: Gamepad2, label: t.wizard.modpack, value: `${draft.pack.title} · ${draft.pack.versionLabel ?? ""}` }
+    modpack
+      ? { icon: Gamepad2, label: t.wizard.modpack, value: `${modpack.title} · ${modpack.versionLabel ?? ""}` }
       : {
           icon: Gamepad2,
           label: t.wizard.version,
           value: `${t.common.minecraft(version ?? "?")}${analysis && analysis.loader.kind !== "vanilla" ? ` · ${loaderLabel(analysis.loader)}` : ""}`,
         },
+    ...(mods.length > 0 ? [{ icon: Puzzle, label: t.wizard.mods, value: mods.map((m) => m.title).join(", ") }] : []),
     ...(draft.owner.trim() ? [{ icon: UserRound, label: t.wizard.ownerShort, value: draft.owner.trim() }] : []),
     { icon: MemoryStick, label: t.wizard.memory, value: t.wizard.upTo(formatGb(draft.maxMb)) },
     {
