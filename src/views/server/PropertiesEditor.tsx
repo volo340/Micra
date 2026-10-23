@@ -149,6 +149,7 @@ function warning(key: string, value: string, t: Dict): { tone: "critical" | "war
   if (key === "enable-rcon" && value === "true") return { tone: "info", text: t.properties.rconNote };
   if (key === "enable-query" && value === "true") return { tone: "info", text: t.properties.queryNote };
   if (key === "force-gamemode" && value === "true") return { tone: "info", text: t.properties.forceGamemodeNote };
+  if (key === "hardcore" && value === "true") return { tone: "warning", text: t.properties.hardcoreNote };
   return null;
 }
 
@@ -160,7 +161,11 @@ interface Props {
   onError: (e: unknown) => void;
 }
 
-/** Editor visual de server.properties, agrupado y con avisos de seguridad. */
+/**
+ * Editor visual de server.properties, agrupado y con avisos de seguridad.
+ * En Minecraft 1.21.9 y posteriores algunas opciones son reglas de juego del
+ * mundo: el núcleo las aplica con /gamerule y aquí se ve el nombre de la regla.
+ */
 export function PropertiesEditor({ serverId, view, running, onSaved, onError }: Props) {
   const t = useT();
   const toast = useToast();
@@ -171,6 +176,7 @@ export function PropertiesEditor({ serverId, view, running, onSaved, onError }: 
   const [group, setGroup] = useState<GroupId | "other">("general");
 
   useEffect(() => setDraft(base), [base]);
+  const labelOf = (key: string) => (t.properties.labels as Record<string, string>)[key] ?? key;
 
   const others = Object.keys(view.values)
     .filter((k) => !KNOWN.has(k))
@@ -193,10 +199,12 @@ export function PropertiesEditor({ serverId, view, running, onSaved, onError }: 
     try {
       const next = await api.saveProperties(serverId, changes);
       onSaved(next);
+      // Encendido, las reglas de juego cambian al momento; lo demás, al reiniciar.
+      const later = Object.keys(changes).some((k) => !(k in next.rules) || next.pending.includes(k));
       toast({
-        tone: running ? "info" : "success",
+        tone: running && later ? "info" : "success",
         title: t.properties.saved,
-        message: running ? t.common.appliesOnRestart : undefined,
+        message: running ? (later ? t.common.appliesOnRestart : t.properties.appliedNow) : undefined,
       });
     } catch (e) {
       onError(e);
@@ -207,7 +215,8 @@ export function PropertiesEditor({ serverId, view, running, onSaved, onError }: 
 
   const renderField = (field: Field) => {
     const value = draft[field.key] ?? "";
-    const label = (t.properties.labels as Record<string, string>)[field.key] ?? field.key;
+    const label = labelOf(field.key);
+    const rule = view.rules[field.key];
     const note = warning(field.key, value, t);
     const id = `prop-${field.key}`;
     let control;
@@ -291,7 +300,13 @@ export function PropertiesEditor({ serverId, view, running, onSaved, onError }: 
       <div key={field.key} className="prop" data-kind={field.kind}>
         <label className="prop-label" htmlFor={id}>
           <span>{label}</span>
-          <span className="prop-key mono">{field.key}</span>
+          {rule ? (
+            <span className="prop-key mono" title={t.properties.ruleHint}>
+              gamerule {rule}
+            </span>
+          ) : (
+            <span className="prop-key mono">{field.key}</span>
+          )}
         </label>
         <div className="prop-control">{control}</div>
         {field.kind === "secret" && <span className="field-hint prop-note">{t.properties.rconPasswordHint}</span>}
@@ -299,6 +314,9 @@ export function PropertiesEditor({ serverId, view, running, onSaved, onError }: 
           <span className="prop-note" data-tone={note.tone}>
             {note.text}
           </span>
+        )}
+        {view.pending.includes(field.key) && (
+          <span className="prop-note">{running ? t.common.appliesOnRestart : t.properties.pendingStart}</span>
         )}
         {field.key === "gamemode" &&
           (draft["force-gamemode"] === "true" ? (
@@ -316,13 +334,18 @@ export function PropertiesEditor({ serverId, view, running, onSaved, onError }: 
   };
 
   const groupIds: (GroupId | "other")[] = [...GROUPS.map((g) => g.id), ...(others.length ? ["other" as const] : [])];
+  // Las que esta versión de Minecraft ya no tiene no se muestran.
+  const visible = (g: GroupId) => GROUPS.find((x) => x.id === g)!.fields.filter((f) => !view.removed.includes(f.key));
+  const removedHere = (g: GroupId) =>
+    GROUPS.find((x) => x.id === g)!.fields.filter((f) => view.removed.includes(f.key));
+  const hasRules = Object.keys(view.rules).length > 0;
 
   return (
     <section className="card card-pad settings-card">
       <CardTitle
         icon={<FileCog size={17} />}
         title={t.properties.title}
-        hint={view.exists ? t.properties.hint : t.properties.notCreated}
+        hint={view.exists ? (hasRules ? t.properties.hintRules : t.properties.hint) : t.properties.notCreated}
       />
       <div className="segmented" role="tablist" aria-label={t.properties.title}>
         {groupIds.map((g) => (
@@ -357,7 +380,16 @@ export function PropertiesEditor({ serverId, view, running, onSaved, onError }: 
                 </div>
               </div>
             ))
-          : GROUPS.find((g) => g.id === group)!.fields.map(renderField)}
+          : visible(group).map(renderField)}
+        {group !== "other" && removedHere(group).length > 0 && (
+          <p className="props-note">
+            {t.properties.removedNote(
+              removedHere(group)
+                .map((f) => labelOf(f.key))
+                .join(", "),
+            )}
+          </p>
+        )}
       </div>
       {dirty && (
         <div className="button-row">
@@ -369,11 +401,7 @@ export function PropertiesEditor({ serverId, view, running, onSaved, onError }: 
             {t.common.discard}
           </button>
           {errors.length > 0 && (
-            <span className="error-text">
-              {t.properties.invalid(
-                errors.map((f) => (t.properties.labels as Record<string, string>)[f.key] ?? f.key).join(", "),
-              )}
-            </span>
+            <span className="error-text">{t.properties.invalid(errors.map((f) => labelOf(f.key)).join(", "))}</span>
           )}
         </div>
       )}

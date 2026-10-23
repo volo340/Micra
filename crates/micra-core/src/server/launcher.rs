@@ -146,6 +146,7 @@ mod tests {
             map: MapConfig::default(),
             source: None,
             pending_owner: None,
+            world: WorldTweaks::default(),
         };
         let args = build_args(&cfg);
         assert_eq!(args[0], "-Xms1024M");

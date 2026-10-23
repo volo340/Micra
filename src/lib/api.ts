@@ -22,6 +22,7 @@ import type {
   LivePayload,
   MinecraftVersion,
   ModInfo,
+  ModLoader,
   ModRemoteInfo,
   ModrinthSearchResponse,
   ModrinthVersion,
@@ -64,14 +65,37 @@ export const api = {
 
   // Contenido para crear servidores
   minecraftVersions: () => invoke<MinecraftVersion[]>("minecraft_versions"),
-  searchModrinth: (query: string, gameVersion?: string) =>
+  loaderGameVersions: (loader: ModLoader) => invoke<string[]>("loader_game_versions", { loader }),
+  /** Modpacks de alguno de estos loaders (nombres de Modrinth: "fabric", "forge", "neoforge"). */
+  searchModrinth: (query: string, loaders: string[]) =>
     invoke<ModrinthSearchResponse>("search_modrinth", {
-      query: { query, kind: "modpack", gameVersion: gameVersion ?? null, loader: null, limit: 24, offset: 0 },
+      query: {
+        query,
+        kind: "modpack",
+        gameVersion: null,
+        loader: loaders[0] ?? null,
+        extraLoaders: loaders.slice(1),
+        limit: 24,
+        offset: 0,
+      },
     }),
-  modrinthVersions: (projectId: string) =>
-    invoke<ModrinthVersion[]>("modrinth_versions", { projectId, gameVersion: null, loader: null }),
-  searchCurseForge: (query: string) =>
-    invoke<CfSearchResponse>("search_curseforge", { query, class: "modpack", gameVersion: null, index: 0 }),
+  /** Mods para un servidor que aún no existe (en uno creado, `searchMods`). */
+  searchModrinthMods: (query: string, gameVersion: string, loaders: string[], offset = 0) =>
+    invoke<ModrinthSearchResponse>("search_modrinth", {
+      query: {
+        query,
+        kind: "mod",
+        gameVersion,
+        loader: loaders[0] ?? null,
+        extraLoaders: loaders.slice(1),
+        limit: 20,
+        offset,
+      },
+    }),
+  modrinthVersions: (projectId: string, loaders: string[]) =>
+    invoke<ModrinthVersion[]>("modrinth_versions", { projectId, gameVersion: null, loaders }),
+  searchCurseForge: (query: string, loaders: string[]) =>
+    invoke<CfSearchResponse>("search_curseforge", { query, class: "modpack", gameVersion: null, loaders, index: 0 }),
   curseForgeFiles: (modId: number) => invoke<CfFile[]>("curseforge_files", { modId, gameVersion: null }),
 
   // Servidores

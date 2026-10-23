@@ -1,17 +1,36 @@
 import { AlertTriangle, Check, CheckCircle2, LayoutDashboard, Power } from "lucide-react";
+import { Banner } from "../../components/ui";
 import { useT, type Dict } from "../../i18n";
 import { formatBytes, formatPercent } from "../../lib/format";
 import type { ProvisionStep, ServerConfig } from "../../lib/types";
 import type { TaskProgress } from "../../lib/useTask";
-import { isModpack, type Kind } from "./draft";
+import type { Kind } from "./draft";
+
+/** El mod que se está instalando después de crear el servidor. */
+export interface ModProgress {
+  index: number;
+  total: number;
+  title: string;
+}
+
+export interface FailedMod {
+  title: string;
+  error: string;
+}
 
 interface Props {
   name: string;
   kind: Kind;
+  /** Si el servidor sale de un modpack. */
+  modpack: boolean;
   step: ProvisionStep | null;
   /** Progreso de la copia al importar. */
   copy: TaskProgress | null;
   javaMajor: number | null;
+  /** Cuántos mods elegidos hay que instalar al final. */
+  mods: number;
+  modProgress: ModProgress | null;
+  failedMods: FailedMod[];
   error: string | null;
   created: ServerConfig | null;
   onBack: () => void;
@@ -47,7 +66,9 @@ function detail(step: ProvisionStep | null, t: Dict): { text: string; ratio: num
   return null;
 }
 
-export function Provisioning({ name, kind, step, copy, javaMajor, error, created, onBack, onOpen }: Props) {
+export function Provisioning(props: Props) {
+  const { name, kind, modpack, step, copy, javaMajor, mods, modProgress, failedMods, error, created, onBack, onOpen } =
+    props;
   const t = useT();
   if (created) {
     return (
@@ -57,6 +78,20 @@ export function Provisioning({ name, kind, step, copy, javaMajor, error, created
         </span>
         <h2>{t.wizard.ready(created.name)}</h2>
         <p className="muted">{t.wizard.readyHint(created.mcVersion, created.javaMajor)}</p>
+        {failedMods.length > 0 && (
+          <div className="provision-warning">
+            <Banner tone="warning">
+              <strong>{t.wizard.modsFailed(failedMods.length)}</strong>
+              <ul className="provision-failures">
+                {failedMods.map((m) => (
+                  <li key={m.title}>
+                    {m.title}: <span className="selectable">{m.error}</span>
+                  </li>
+                ))}
+              </ul>
+            </Banner>
+          </div>
+        )}
         <div className="provision-actions">
           <button className="btn btn-secondary btn-lg" onClick={() => onOpen(false)}>
             <LayoutDashboard size={17} />
@@ -98,13 +133,20 @@ export function Provisioning({ name, kind, step, copy, javaMajor, error, created
     info = copying && ratio !== null ? { text: formatPercent(ratio * 100), ratio } : null;
     phases = [t.wizard.phaseCopy, t.wizard.phasePrepare];
   } else {
-    current = phaseOf(step);
-    info = detail(step, t);
+    // Los mods elegidos se instalan cuando el servidor ya está creado.
+    current = modProgress ? 4 : phaseOf(step);
+    info = modProgress
+      ? {
+          text: t.wizard.modOf(modProgress.index + 1, modProgress.total, modProgress.title),
+          ratio: modProgress.index / modProgress.total,
+        }
+      : detail(step, t);
     phases = [
-      isModpack(kind) ? t.wizard.phasePack : t.wizard.phaseMinecraft,
+      modpack ? t.wizard.phasePack : t.wizard.phaseMinecraft,
       javaMajor ? t.wizard.phaseJavaN(javaMajor) : t.wizard.phaseJava,
       kind === "vanilla" ? t.wizard.phaseServer : t.wizard.phaseLoader,
       t.wizard.phaseConfig,
+      ...(mods > 0 ? [t.wizard.phaseMods] : []),
     ];
   }
 

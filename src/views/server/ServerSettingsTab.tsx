@@ -54,7 +54,7 @@ export function ServerSettingsTab(props: Props) {
         .getProperties(id)
         .then(setProperties)
         .catch((e) => {
-          setProperties({ values: {}, exists: false });
+          setProperties({ values: {}, exists: false, rules: {}, removed: [], pending: [] });
           onError(e);
         }),
     [id, onError],

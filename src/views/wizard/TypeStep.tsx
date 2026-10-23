@@ -1,22 +1,20 @@
-import { Box, Check, Feather, Flame, FolderInput, PackageSearch } from "lucide-react";
+import { Anvil, Box, Check, Feather, FolderInput } from "lucide-react";
 import { useT } from "../../i18n";
 import type { Kind } from "./draft";
 
 const OPTIONS: { kind: Kind; icon: typeof Box }[] = [
   { kind: "vanilla", icon: Box },
   { kind: "fabric", icon: Feather },
-  { kind: "modrinth", icon: PackageSearch },
-  { kind: "curseforge", icon: Flame },
+  { kind: "forge", icon: Anvil },
   { kind: "import", icon: FolderInput },
 ];
 
 interface Props {
   value: Kind;
-  curseforgeEnabled: boolean;
   onChange: (kind: Kind) => void;
 }
 
-export function TypeStep({ value, curseforgeEnabled, onChange }: Props) {
+export function TypeStep({ value, onChange }: Props) {
   const t = useT();
   return (
     <div className="step">
@@ -26,7 +24,6 @@ export function TypeStep({ value, curseforgeEnabled, onChange }: Props) {
       </div>
       <div className="option-grid" role="radiogroup">
         {OPTIONS.map(({ kind, icon: Icon }) => {
-          const disabled = kind === "curseforge" && !curseforgeEnabled;
           const selected = value === kind;
           const option = t.wizard.kinds[kind];
           return (
@@ -37,8 +34,6 @@ export function TypeStep({ value, curseforgeEnabled, onChange }: Props) {
               aria-checked={selected}
               className="option-card"
               data-selected={selected || undefined}
-              data-wide={kind === "import" || undefined}
-              disabled={disabled}
               onClick={() => onChange(kind)}
             >
               <span className="option-icon">
@@ -49,7 +44,7 @@ export function TypeStep({ value, curseforgeEnabled, onChange }: Props) {
                   {option.title}
                   {kind === "vanilla" && <span className="option-tag">{t.wizard.startHere}</span>}
                 </span>
-                <span className="option-desc">{disabled ? t.wizard.curseforgeNeedsKey : option.text}</span>
+                <span className="option-desc">{option.text}</span>
               </span>
               <span className="option-check">{selected && <Check size={14} strokeWidth={3} />}</span>
             </button>

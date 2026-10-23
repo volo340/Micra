@@ -3,26 +3,39 @@ import { ArrowLeft, ArrowRight, Check, Sparkles, X } from "lucide-react";
 import { maxMemory, validPort } from "../../components/ResourceFields";
 import { useT } from "../../i18n";
 import { api, errorMessage, onProvisionStep } from "../../lib/api";
+import { loaderName } from "../../lib/format";
 import { validPlayerName } from "../../lib/serverSettings";
 import type { AppInfo, HardwareInfo, ImportAnalysis, ProvisionStep, ServerConfig } from "../../lib/types";
 import { useTask } from "../../lib/useTask";
+import { ContentStep } from "./ContentStep";
 import {
   defaultMemory,
   freePort,
+  isHeavy,
   isModpack,
+  modLoader,
+  modrinthLoaders,
+  modsToInstall,
   newDraft,
   toImportRequest,
   toRequest,
+  usesLoader,
+  type ContentMode,
   type Draft,
+  type ForgeLoader,
   type Kind,
+  type PackChoice,
+  type PackSource,
 } from "./draft";
 import { ImportStep, importable } from "./ImportStep";
-import { PackStep } from "./PackStep";
-import { Provisioning } from "./Provisioning";
+import { ModsStep } from "./ModsStep";
+import { Provisioning, type FailedMod, type ModProgress } from "./Provisioning";
 import { ResourcesStep } from "./ResourcesStep";
 import { ReviewStep } from "./ReviewStep";
 import { TypeStep } from "./TypeStep";
 import { VersionStep } from "./VersionStep";
+
+type StepId = "type" | "content" | "mods" | "resources" | "confirm";
 
 interface Props {
   hardware: HardwareInfo | null;
@@ -40,6 +53,8 @@ export function Wizard({ hardware, appInfo, usedPorts, onCancel, onCreated }: Pr
   const [creating, setCreating] = useState(false);
   const [progress, setProgress] = useState<ProvisionStep | null>(null);
   const [javaMajor, setJavaMajor] = useState<number | null>(null);
+  const [modProgress, setModProgress] = useState<ModProgress | null>(null);
+  const [failedMods, setFailedMods] = useState<FailedMod[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [created, setCreated] = useState<ServerConfig | null>(null);
   const copy = useTask(null);
@@ -51,26 +66,52 @@ export function Wizard({ hardware, appInfo, usedPorts, onCancel, onCreated }: Pr
 
   const update = (patch: Partial<Draft>) => setDraft((d) => ({ ...d, ...patch }));
   const importing = draft.kind === "import";
-  const steps = [
-    t.wizard.steps.type,
-    importing ? t.wizard.steps.folder : t.wizard.steps.content,
-    t.wizard.steps.resources,
-    t.wizard.steps.confirm,
-  ];
+  const choosingMods = usesLoader(draft.kind) && draft.content === "mods";
+  const ids: StepId[] = ["type", "content", ...(choosingMods ? (["mods"] as const) : []), "resources", "confirm"];
+  const labels: Record<StepId, string> = {
+    type: t.wizard.steps.type,
+    content: importing
+      ? t.wizard.steps.folder
+      : draft.kind === "vanilla"
+        ? t.wizard.steps.version
+        : t.wizard.steps.content,
+    mods: t.wizard.steps.mods,
+    resources: t.wizard.steps.resources,
+    confirm: t.wizard.steps.confirm,
+  };
+  const current = ids[step];
+
+  // Sin nombre propio, el servidor se llama como el modpack o como siempre.
+  const defaultName = (d: Draft, pack: PackChoice | null) =>
+    d.nameTouched ? d.name : pack ? pack.title.slice(0, 48) : t.wizard.defaultName;
+  // Forge y los modpacks recomiendan más memoria que vanilla o Fabric.
+  const withMemory = (d: Draft): Draft => ({ ...d, maxMb: defaultMemory(hardware, isHeavy(d)) });
 
   const chooseKind = (kind: Kind) =>
     setDraft((d) =>
       d.kind === kind
         ? d
-        : {
-            ...d,
-            kind,
-            pack: null,
-            analysis: null,
-            maxMb: defaultMemory(kind, hardware),
-            name: d.nameTouched ? d.name : t.wizard.defaultName,
-          },
+        : withMemory({ ...d, kind, pack: null, mods: [], analysis: null, name: defaultName(d, null) }),
     );
+
+  const chooseContent = (content: ContentMode) =>
+    setDraft((d) =>
+      d.content === content ? d : withMemory({ ...d, content, pack: null, name: defaultName(d, null) }),
+    );
+
+  // Los mods elegidos son de un loader y una versión: si cambian, se vacían.
+  const chooseForgeLoader = (forgeLoader: ForgeLoader) =>
+    setDraft((d) => (d.forgeLoader === forgeLoader ? d : { ...d, forgeLoader, mods: [] }));
+
+  const onVersion = useCallback(
+    (mcVersion: string) => setDraft((d) => (d.mcVersion === mcVersion ? d : { ...d, mcVersion, mods: [] })),
+    [],
+  );
+
+  const choosePackSource = (packSource: PackSource) =>
+    setDraft((d) => (d.packSource === packSource ? d : { ...d, packSource, pack: null, name: defaultName(d, null) }));
+
+  const choosePack = (pack: PackChoice | null) => setDraft((d) => ({ ...d, pack, name: defaultName(d, pack) }));
 
   const onAnalysis = (a: ImportAnalysis) =>
     setDraft((d) => ({
@@ -79,47 +120,63 @@ export function Wizard({ hardware, appInfo, usedPorts, onCancel, onCreated }: Pr
       mcVersion: a.mcVersion ?? d.mcVersion,
       name: d.nameTouched ? d.name : a.suggestedName.slice(0, 48),
       port: a.port && !usedPorts.includes(a.port) && validPort(a.port) ? a.port : freePort(usedPorts),
-      maxMb: defaultMemory("import", hardware, a.modCount > 0),
+      maxMb: defaultMemory(hardware, a.modCount > 0),
     }));
 
-  const onVersion = useCallback((mcVersion: string) => setDraft((d) => ({ ...d, mcVersion })), []);
-
   const owner = draft.owner.trim();
-  const content = importing
-    ? importable(draft.analysis) && Boolean(draft.analysis?.mcVersion ?? draft.mcVersion)
-    : isModpack(draft.kind)
-      ? Boolean(draft.pack?.versionId)
-      : Boolean(draft.mcVersion);
-  const canNext = [
-    true,
-    content,
-    draft.name.trim().length > 0 &&
+  const ready: Record<StepId, boolean> = {
+    type: true,
+    content: importing
+      ? importable(draft.analysis) && Boolean(draft.analysis?.mcVersion ?? draft.mcVersion)
+      : isModpack(draft)
+        ? Boolean(draft.pack?.versionId)
+        : Boolean(draft.mcVersion),
+    mods: true,
+    resources:
+      draft.name.trim().length > 0 &&
       validPort(draft.port) &&
       (draft.allCores || draft.cores.length > 0) &&
       (owner === "" || validPlayerName(owner)),
-    draft.eula,
-  ][step];
+    confirm: draft.eula,
+  };
 
   const create = async () => {
     setCreating(true);
     setError(null);
     setProgress(null);
+    setModProgress(null);
+    setFailedMods([]);
     const unlisten = await onProvisionStep((p) => {
       setProgress(p);
       if (p.step === "installingJava") setJavaMajor(p.major);
     });
     try {
-      setCreated(
-        importing
-          ? await copy.run("import", () => api.importServer(toImportRequest(draft)))
-          : await api.createServer(toRequest(draft)),
-      );
+      if (importing) {
+        setCreated(await copy.run("import", () => api.importServer(toImportRequest(draft))));
+        return;
+      }
+      const config = await api.createServer(toRequest(draft));
+      // El servidor ya existe: un mod que falla no lo estropea, se avisa al final.
+      const mods = modsToInstall(draft);
+      const failed: FailedMod[] = [];
+      for (const [index, mod] of mods.entries()) {
+        setModProgress({ index, total: mods.length, title: mod.title });
+        try {
+          await api.installMod(config.id, mod.projectId);
+        } catch (e) {
+          failed.push({ title: mod.title, error: errorMessage(e) });
+        }
+      }
+      setFailedMods(failed);
+      setCreated(config);
     } catch (e) {
       setError(errorMessage(e));
     } finally {
       unlisten();
     }
   };
+
+  const loader = modLoader(draft);
 
   return (
     <div className="page wizard">
@@ -140,9 +197,13 @@ export function Wizard({ hardware, appInfo, usedPorts, onCancel, onCreated }: Pr
         <Provisioning
           name={draft.name.trim()}
           kind={draft.kind}
+          modpack={isModpack(draft)}
           step={progress}
           copy={copy.progress}
           javaMajor={javaMajor}
+          mods={modsToInstall(draft).length}
+          modProgress={modProgress}
+          failedMods={failedMods}
           error={error}
           created={created}
           onBack={() => setCreating(false)}
@@ -151,15 +212,15 @@ export function Wizard({ hardware, appInfo, usedPorts, onCancel, onCreated }: Pr
       ) : (
         <>
           <ol className="stepper">
-            {steps.map((label, i) => {
+            {ids.map((id, i) => {
               const state = i < step ? "done" : i === step ? "current" : "todo";
               return (
-                <li key={label} data-state={state}>
+                <li key={id} data-state={state}>
                   <button type="button" disabled={i >= step} onClick={() => setStep(i)}>
                     <span className="stepper-dot">
                       {state === "done" ? <Check size={13} strokeWidth={3} /> : i + 1}
                     </span>
-                    {label}
+                    {labels[id]}
                   </button>
                 </li>
               );
@@ -167,37 +228,34 @@ export function Wizard({ hardware, appInfo, usedPorts, onCancel, onCreated }: Pr
           </ol>
 
           <div className="card wizard-card">
-            {step === 0 && (
-              <TypeStep
-                value={draft.kind}
-                curseforgeEnabled={Boolean(appInfo?.curseforgeEnabled)}
-                onChange={chooseKind}
-              />
-            )}
-            {step === 1 &&
+            {current === "type" && <TypeStep value={draft.kind} onChange={chooseKind} />}
+            {current === "content" &&
               (importing ? (
                 <ImportStep draft={draft} onAnalysis={onAnalysis} onVersion={onVersion} />
-              ) : isModpack(draft.kind) ? (
-                <PackStep
-                  source={draft.kind === "modrinth" ? "modrinth" : "curseforge"}
-                  value={draft.pack}
-                  onChange={(pack) =>
-                    setDraft((d) => ({
-                      ...d,
-                      pack,
-                      name: d.nameTouched || !pack ? d.name : pack.title.slice(0, 48),
-                    }))
-                  }
+              ) : usesLoader(draft.kind) ? (
+                <ContentStep
+                  draft={draft}
+                  curseforgeEnabled={Boolean(appInfo?.curseforgeEnabled)}
+                  onContent={chooseContent}
+                  onForgeLoader={chooseForgeLoader}
+                  onVersion={onVersion}
+                  onPackSource={choosePackSource}
+                  onPack={choosePack}
                 />
               ) : (
-                <VersionStep
-                  fabric={draft.kind === "fabric"}
-                  value={draft.mcVersion}
-                  onChange={(mcVersion) => update({ mcVersion })}
-                />
+                <VersionStep value={draft.mcVersion} onChange={onVersion} />
               ))}
-            {step === 2 && <ResourcesStep draft={draft} hardware={hardware} onChange={update} />}
-            {step === 3 && <ReviewStep draft={draft} onChange={update} />}
+            {current === "mods" && loader && draft.mcVersion && (
+              <ModsStep
+                loaders={modrinthLoaders(draft)}
+                loaderName={loaderName(loader)}
+                mcVersion={draft.mcVersion}
+                value={draft.mods}
+                onChange={(mods) => update({ mods })}
+              />
+            )}
+            {current === "resources" && <ResourcesStep draft={draft} hardware={hardware} onChange={update} />}
+            {current === "confirm" && <ReviewStep draft={draft} onChange={update} />}
           </div>
 
           <footer className="wizard-footer">
@@ -205,13 +263,13 @@ export function Wizard({ hardware, appInfo, usedPorts, onCancel, onCreated }: Pr
               <ArrowLeft size={16} />
               {t.common.back}
             </button>
-            {step < steps.length - 1 ? (
-              <button className="btn btn-primary" onClick={() => setStep((s) => s + 1)} disabled={!canNext}>
-                {t.common.next}
+            {step < ids.length - 1 ? (
+              <button className="btn btn-primary" onClick={() => setStep((s) => s + 1)} disabled={!ready[current]}>
+                {current === "mods" && draft.mods.length === 0 ? t.wizard.skipMods : t.common.next}
                 <ArrowRight size={16} />
               </button>
             ) : (
-              <button className="btn btn-primary" onClick={create} disabled={!canNext}>
+              <button className="btn btn-primary" onClick={create} disabled={!ready[current]}>
                 <Sparkles size={16} />
                 {importing ? t.wizard.import : t.wizard.create}
               </button>

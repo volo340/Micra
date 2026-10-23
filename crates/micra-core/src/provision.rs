@@ -1,7 +1,8 @@
 //! Orquestación del asistente de creación: de "lo que eligió el usuario" a un
 //! directorio de servidor listo para arrancar.
 //!
-//! 1. Obtener el contenido (vanilla, `.mrpack` de Modrinth o server pack de CurseForge).
+//! 1. Obtener el contenido (vanilla, Fabric, Forge, NeoForge, `.mrpack` de
+//!    Modrinth o server pack de CurseForge).
 //! 2. Averiguar la versión de Minecraft y el loader.
 //! 3. Elegir y asegurar el runtime de Java correcto.
 //! 4. Instalar el loader si el pack no lo trae.
@@ -20,6 +21,7 @@ use crate::providers::{loaders, mojang, mrpack};
 use crate::server::config::{
     slugify, validate_resources, BackupPolicy, ContentSource, CpuConfig, LaunchTarget, Loader,
     MapConfig, MemoryConfig, NetworkPolicy, SchedulePolicy, SecurityPolicy, ServerConfig,
+    WorldTweaks,
 };
 use crate::server::detect::{
     bundled_installer, detect_launch_target, detect_loader, detect_mc_version, pack_declared_loader,
@@ -39,6 +41,18 @@ pub enum ServerSource {
     Fabric {
         mc_version: String,
         loader_version: Option<String>,
+    },
+    /// Sin `version` se usa la recomendada (o la última) para esa versión.
+    #[serde(rename_all = "camelCase")]
+    Forge {
+        mc_version: String,
+        version: Option<String>,
+    },
+    /// Sin `version` se usa la última estable (o la última beta).
+    #[serde(rename_all = "camelCase")]
+    NeoForge {
+        mc_version: String,
+        version: Option<String>,
     },
     #[serde(rename_all = "camelCase")]
     Modrinth { version_id: String },
@@ -211,6 +225,7 @@ impl Provisioner<'_> {
             map,
             source: content.source,
             pending_owner: None,
+            world: WorldTweaks::default(),
         };
         eula::write_eula(dir, config.eula_accepted).await?;
         let mut values: Vec<(&str, String)> = vec![
@@ -255,6 +270,38 @@ impl Provisioner<'_> {
                 Content {
                     mc_version: mc_version.clone(),
                     loader: Loader::Fabric { loader_version },
+                    prepackaged: false,
+                    source: None,
+                    manifest: None,
+                }
+            }
+            ServerSource::Forge {
+                mc_version,
+                version,
+            } => {
+                let version = match version {
+                    Some(v) => v.clone(),
+                    None => loaders::latest_forge(self.http, mc_version).await?,
+                };
+                Content {
+                    mc_version: mc_version.clone(),
+                    loader: Loader::Forge { version },
+                    prepackaged: false,
+                    source: None,
+                    manifest: None,
+                }
+            }
+            ServerSource::NeoForge {
+                mc_version,
+                version,
+            } => {
+                let version = match version {
+                    Some(v) => v.clone(),
+                    None => loaders::latest_neoforge(self.http, mc_version).await?,
+                };
+                Content {
+                    mc_version: mc_version.clone(),
+                    loader: Loader::NeoForge { version },
                     prepackaged: false,
                     source: None,
                     manifest: None,
@@ -545,5 +592,24 @@ mod tests {
         for (k, v) in SECURE_DEFAULTS {
             properties::validate(k, v).unwrap();
         }
+    }
+
+    /// Lo que envía el asistente para Forge y NeoForge.
+    #[test]
+    fn forge_sources_from_the_wizard() {
+        let forge: ServerSource =
+            serde_json::from_str(r#"{"kind":"forge","mcVersion":"1.20.1","version":null}"#)
+                .unwrap();
+        assert!(matches!(
+            forge,
+            ServerSource::Forge { ref mc_version, version: None } if mc_version == "1.20.1"
+        ));
+        let neo: ServerSource =
+            serde_json::from_str(r#"{"kind":"neoForge","mcVersion":"26.3","version":"26.3.0.95"}"#)
+                .unwrap();
+        assert!(matches!(
+            neo,
+            ServerSource::NeoForge { version: Some(ref v), .. } if v == "26.3.0.95"
+        ));
     }
 }

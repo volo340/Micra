@@ -533,10 +533,19 @@ export const fr: Dict = {
     queryNote: "Donne des informations sur le serveur à qui les demande ; inutile pour jouer.",
     gamemodeForAll: "S’applique à tout le monde à chaque connexion, y compris à ceux qui avaient déjà joué.",
     gamemodeNewOnly:
-      "Ne change que le mode des joueurs qui se connectent pour la première fois : les autres gardent le leur.",
+      "Ne change que le mode des joueurs qui se connectent pour la première fois : les autres gardent le leur.",
     gamemodeApplyAll: "Appliquer à tous",
     forceGamemodeNote:
       "À la connexion, chaque joueur revient au mode du serveur, même si vous avez changé le sien avec /gamemode.",
+    hintRules:
+      "Les réglages de Minecraft lui-même. La plupart s’appliquent au redémarrage du serveur ; les règles du jeu, tout de suite.",
+    ruleHint:
+      "Dans cette version de Minecraft, c’est une règle du monde : quand le serveur tourne, elle change tout de suite.",
+    removedNote: (list: string) => `Cette version de Minecraft n’a plus ces options : ${list}.`,
+    hardcoreNote:
+      "Qui meurt devient spectateur et ne peut plus jouer dans ce monde. La difficulté reste sur Difficile.",
+    pendingStart: "S’applique au démarrage du serveur.",
+    appliedNow: "Appliqué tout de suite, sans redémarrer.",
     rconPasswordHint: "S’il est vide ou trop court, Micra en définit un de 32 caractères.",
     portElsewhere: "Se modifie dans Réseau",
     save: "Enregistrer les propriétés",
@@ -616,34 +625,50 @@ export const fr: Dict = {
 
   wizard: {
     title: "Nouveau serveur",
-    subtitle: "Quatre étapes et c’est parti.",
-    steps: { type: "Type", content: "Contenu", folder: "Dossier", resources: "Ressources", confirm: "Confirmer" },
+    subtitle: "Quelques étapes et c’est parti.",
+    steps: {
+      type: "Type",
+      version: "Version",
+      content: "Contenu",
+      mods: "Mods",
+      folder: "Dossier",
+      resources: "Ressources",
+      confirm: "Confirmer",
+    },
     typeTitle: "Quel type de serveur voulez-vous ?",
     typeHint: "Vous pouvez avoir plusieurs serveurs, chacun avec son port et ses ressources.",
     kinds: {
       vanilla: { title: "Vanilla", text: "Minecraft tel quel, sans mods. Le plus simple pour jouer entre amis." },
-      fabric: { title: "Fabric", text: "Léger et rapide, prêt pour des mods de performance ou de confort." },
-      modrinth: {
-        title: "Modpack Modrinth",
-        text: "Choisissez parmi des milliers de modpacks et Micra les installe en mode serveur.",
-      },
-      curseforge: { title: "Modpack CurseForge", text: "Utilise le pack serveur officiel publié par chaque auteur." },
+      fabric: { title: "Fabric", text: "Léger et rapide. Choisissez vos mods Fabric ou un modpack tout prêt." },
+      forge: { title: "Forge / NeoForge", text: "Pour les plus gros mods et modpacks : technologie, magie, aventure…" },
       import: {
         title: "Importer un serveur existant",
         text: "Choisissez son dossier : Micra le copie, détecte la version et les mods, et le prépare.",
       },
     },
     startHere: "Pour commencer",
-    curseforgeNeedsKey: "Nécessite une clé d’API CurseForge (voir Paramètres).",
+    curseforgeNeedsKey: "Chercher sur CurseForge nécessite une clé d’API (voir Paramètres).",
     versionTitle: "Choisissez la version de Minecraft",
     versionHint: "Vos amis devront ouvrir Minecraft dans cette même version pour rejoindre.",
     versionsFailed: (e: string) => `Impossible de charger la liste des versions : ${e}`,
     recent: "Versions récentes",
     latest: "Dernière",
     allVersions: "Toutes les versions",
-    fabricNote: "Micra installera la dernière version stable de Fabric compatible avec cette version.",
-    packTitle: (source: string) => `Cherchez un modpack sur ${source}`,
-    packHint: "Micra ne téléchargera que ce dont le serveur a besoin.",
+    contentTitle: (family: string) => `Comment voulez-vous votre serveur ${family} ?`,
+    contentHint: "Choisissez vous-même les mods ou partez d’un modpack tout prêt.",
+    contentMods: {
+      title: "Choisir les mods",
+      text: "Vous choisissez la version de Minecraft et, à l’étape suivante, les mods que vous voulez.",
+    },
+    contentModpack: {
+      title: "Utiliser un modpack",
+      text: "Un ensemble de mods tout prêt, avec sa propre version de Minecraft.",
+    },
+    forgeHint: "La plupart des mods récents sont faits pour NeoForge ; Forge reste courant sur les anciennes versions.",
+    packSource: "Chercher des modpacks sur",
+    packOnly: (family: string) => `Seuls les modpacks ${family} sont affichés.`,
+    loaderNote: (loader: string) =>
+      `Micra installera la dernière version stable de ${loader} pour cette version de Minecraft.`,
     packVersionsFailed: (e: string) => `Impossible de charger les versions : ${e}`,
     packVersionsLoading: "Chargement des versions…",
     packNoServer: "Ce modpack n’a pas de version serveur.",
@@ -653,6 +678,15 @@ export const fr: Dict = {
     noResults: "Aucun résultat",
     noResultsHint: "Essayez d’autres mots.",
     by: (author: string) => `par ${author}`,
+    modsTitle: "Ajoutez des mods (facultatif)",
+    modsHint: (loader: string, mc: string) =>
+      `Mods ${loader} pour Minecraft ${mc}. Micra les installe, avec tout ce dont ils ont besoin, en créant le serveur ; vous pourrez en ajouter ou en retirer d’autres dans l’onglet Mods.`,
+    modsSearch: "Chercher des mods sur Modrinth : performance, cartes, magie…",
+    modsChosen: (n: number) => (n === 1 ? "1 mod choisi" : `${n} mods choisis`),
+    modRemove: (name: string) => `Retirer ${name}`,
+    modAdd: "Ajouter",
+    modAdded: "Ajouté",
+    skipMods: "Continuer sans mods",
     resourcesTitle: "Nom et ressources",
     resourcesHint: "Vous pouvez garder les valeurs recommandées ; vous les changerez plus tard si besoin.",
     name: "Nom du serveur",
@@ -664,6 +698,8 @@ export const fr: Dict = {
       "La liste blanche est activée d’office : seules les personnes ajoutées peuvent entrer. Avec votre nom, Micra vous ajoute et vous nomme opérateur.",
     memoryModpack: "Pour les modpacks, 6 à 8 Go sont recommandés.",
     memoryVanilla: "2 à 4 Go suffisent largement pour jouer entre amis.",
+    memoryForge: "Forge et NeoForge demandent plus de mémoire : 6 Go ou plus sont recommandés.",
+    memoryMods: "4 Go suffisent pour quelques mods ; avec beaucoup, mieux vaut 6 Go.",
     reviewTitle: "Vérifiez et créez votre serveur",
     reviewHint:
       "Micra téléchargera Java et les fichiers nécessaires. La première fois, cela peut prendre quelques minutes.",
@@ -723,6 +759,12 @@ export const fr: Dict = {
     phaseServer: "Télécharger le serveur",
     phaseLoader: "Installer le serveur et le loader",
     phaseConfig: "Configurer EULA, port, mémoire et sécurité",
+    phaseMods: "Installer les mods",
+    modOf: (n: number, total: number, name: string) => `Mod ${n} sur ${total} : ${name}`,
+    modsFailed: (n: number) =>
+      n === 1
+        ? "1 mod n’a pas pu être installé. Vous pouvez réessayer depuis l’onglet Mods."
+        : `${n} mods n’ont pas pu être installés. Vous pouvez réessayer depuis l’onglet Mods.`,
     creating: (name: string) => `Création de « ${name} »…`,
     importing: (name: string) => `Import de « ${name} »…`,
     creatingHint: "Vous pouvez laisser Micra ouvert et faire autre chose ; il vous préviendra à la fin.",

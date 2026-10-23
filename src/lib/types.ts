@@ -280,8 +280,13 @@ export interface AppErrorPayload {
 export type ServerSource =
   | { kind: "vanilla"; mcVersion: string }
   | { kind: "fabric"; mcVersion: string; loaderVersion: string | null }
+  | { kind: "forge"; mcVersion: string; version: string | null }
+  | { kind: "neoForge"; mcVersion: string; version: string | null }
   | { kind: "modrinth"; versionId: string }
   | { kind: "curseForge"; modId: number; fileId: number };
+
+/** Loaders con los que el asistente crea servidores con mods. */
+export type ModLoader = "fabric" | "forge" | "neoForge";
 
 export interface NewServerRequest {
   name: string;
@@ -453,8 +458,15 @@ export interface ScanReport {
 // ---------- Propiedades, estadísticas y red ----------
 
 export interface PropertiesView {
+  /** Lo del archivo, con los valores que guarda el mundo donde mandan. */
   values: Record<string, string>;
   exists: boolean;
+  /** Propiedad → regla de juego que la sustituye en esta versión de Minecraft. */
+  rules: Record<string, string>;
+  /** Propiedades que esta versión ya no tiene. */
+  removed: string[];
+  /** Cambios para el mundo que esperan al próximo arranque. */
+  pending: string[];
 }
 
 export type StatsRange = "hour" | "day" | "week" | "month";

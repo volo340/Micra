@@ -1,6 +1,8 @@
-//! Versiones de Minecraft y búsqueda de modpacks en Modrinth y CurseForge.
+//! Versiones de Minecraft (también las de cada loader) y búsqueda de mods y
+//! modpacks en Modrinth y CurseForge.
 
 use micra_core::providers::curseforge::{CfClass, CfFile, CfSearchResponse};
+use micra_core::providers::loaders::{self, ModLoader};
 use micra_core::providers::modrinth::{SearchQuery, SearchResponse, Version};
 use micra_core::providers::mojang::{self, VersionEntry};
 use micra_core::{tr, Error};
@@ -20,6 +22,15 @@ pub async fn minecraft_versions(state: State<'_, Shared>) -> CmdResult<Vec<Versi
         .collect())
 }
 
+/// Versiones de Minecraft con servidor de Fabric, Forge o NeoForge.
+#[tauri::command]
+pub async fn loader_game_versions(
+    state: State<'_, Shared>,
+    loader: ModLoader,
+) -> CmdResult<Vec<String>> {
+    loaders::game_versions(&state.http, loader).await
+}
+
 #[tauri::command]
 pub async fn search_modrinth(
     state: State<'_, Shared>,
@@ -28,16 +39,18 @@ pub async fn search_modrinth(
     state.modrinth.search(&query).await
 }
 
+/// Versiones de un proyecto; con `loaders`, solo las de alguno de ellos.
 #[tauri::command]
 pub async fn modrinth_versions(
     state: State<'_, Shared>,
     project_id: String,
     game_version: Option<String>,
-    loader: Option<String>,
+    loaders: Option<Vec<String>>,
 ) -> CmdResult<Vec<Version>> {
+    let loaders: Vec<&str> = loaders.iter().flatten().map(String::as_str).collect();
     state
         .modrinth
-        .project_versions(&project_id, game_version.as_deref(), loader.as_deref())
+        .project_versions_any(&project_id, game_version.as_deref(), &loaders)
         .await
 }
 
@@ -52,13 +65,16 @@ pub async fn search_curseforge(
     query: String,
     class: CfClass,
     game_version: Option<String>,
+    loaders: Option<Vec<String>>,
     index: Option<u32>,
 ) -> CmdResult<CfSearchResponse> {
     let cf = state.curseforge().await.ok_or_else(curseforge_missing)?;
+    let loaders: Vec<&str> = loaders.iter().flatten().map(String::as_str).collect();
     cf.search(
         &query,
         class,
         game_version.as_deref(),
+        &loaders,
         index.unwrap_or(0),
         20,
     )

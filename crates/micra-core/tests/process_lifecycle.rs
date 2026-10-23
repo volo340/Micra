@@ -8,6 +8,7 @@ use std::time::Duration;
 use micra_core::java::JavaRuntime;
 use micra_core::server::backup::{self, BackupKind};
 use micra_core::server::config::*;
+use micra_core::server::gamerules;
 use micra_core::server::process::{ServerEvent, ServerHandle, ServerStatus};
 use micra_core::server::tps::{self, TpsReading};
 use tokio::sync::broadcast::Receiver;
@@ -36,6 +37,12 @@ while read line; do
       echo "[12:00:02] [Server thread/INFO]: {sys}The game is running normally"
       echo "[12:00:02] [Server thread/INFO]: {sys}Target tick rate: 20.0 per second."
       echo "[12:00:02] [Server thread/INFO]: {sys}Average time per tick: 62.5ms (Target: 50.0ms)" ;;
+    "gamerule "*" "*)
+      set -- $line
+      echo "[12:00:02] [Server thread/INFO]: {sys}Gamerule $2 is now set to: $3" ;;
+    "gamerule "*)
+      set -- $line
+      echo "[12:00:02] [Server thread/INFO]: {sys}Gamerule $2 is currently set to: true" ;;
     stop) echo "[12:00:03] [Server thread/INFO]: Stopping server"; exit 0 ;;
   esac
 done
@@ -111,6 +118,7 @@ async fn run_server(mc_version: &str, system_prefix: &str) {
         map: MapConfig::default(),
         source: None,
         pending_owner: None,
+        world: WorldTweaks::default(),
     };
 
     let (server, mut events) = ServerHandle::launch(&cfg, dir.path(), &java).await.unwrap();
@@ -145,6 +153,44 @@ async fn run_server(mc_version: &str, system_prefix: &str) {
         TpsReading::Tps(t) => assert!((t - 16.0).abs() < 0.01, "{t}"),
         other => panic!("{other:?} de {lines:?}"),
     }
+
+    // Reglas de juego: varias preguntas a la vez, ocultas de la consola y sin
+    // esperar a que pase la ventana entera.
+    let commands = [
+        gamerules::query_command("pvp"),
+        gamerules::query_command("spawn_monsters"),
+    ];
+    let asked = std::time::Instant::now();
+    let lines = server
+        .query_all(
+            &commands,
+            gamerules::is_query_line,
+            |lines| lines.len() >= 2,
+            Duration::from_secs(5),
+        )
+        .await
+        .unwrap();
+    assert!(asked.elapsed() < Duration::from_secs(2));
+    let answers: Vec<_> = lines
+        .iter()
+        .filter_map(|l| gamerules::parse_query(l))
+        .collect();
+    assert_eq!(
+        answers,
+        vec![
+            ("pvp".to_string(), true),
+            ("spawn_monsters".to_string(), true)
+        ]
+    );
+    let set = server
+        .command_and_wait(
+            &gamerules::set_command("pvp", false),
+            |msg| gamerules::parse_set(msg) == Some(("pvp".to_string(), false)),
+            Duration::from_secs(5),
+        )
+        .await
+        .unwrap();
+    assert!(set);
 
     // Copia en caliente: save-off, save-all flush, copia y save-on.
     std::fs::create_dir_all(dir.path().join("world/region")).unwrap();

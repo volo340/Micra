@@ -8,8 +8,10 @@
 //   ?platform=windows ajustes y rutas de Windows
 //   ?update=1         hay una versión nueva de Micra
 //   ?malware=1        el análisis de mods encuentra algo
+//   ?modfail=1        el asistente no consigue instalar el segundo mod elegido
 import { emit } from "@tauri-apps/api/event";
 import { mockIPC } from "@tauri-apps/api/mocks";
+import { loaderName } from "../lib/format";
 import type {
   AppSettings,
   BackupInfo,
@@ -124,9 +126,9 @@ let servers: ServerSummary[] =
           makeConfig({
             id: "survival-con-amigos",
             name: "Survival con amigos",
-            mcVersion: "1.21.4",
+            mcVersion: "26.3",
             loader: { kind: "vanilla" },
-            javaMajor: 21,
+            javaMajor: 25,
             memory: { minMb: 2048, maxMb: 4096 },
             cpu: { cores: null },
             port: 25565,
@@ -231,7 +233,6 @@ function nextAt(time: string): string {
 }
 
 const STARTUP = [
-  "Starting minecraft server version 1.21.4",
   "Loading properties",
   "Default game type: SURVIVAL",
   "Generating keypair",
@@ -282,6 +283,7 @@ async function start(id: string, fast = false) {
     tunnel: config.network.tunnel ? { kind: "starting" } : null,
     restartAt: config.schedule.dailyRestart ? nextAt(config.schedule.dailyRestart) : null,
   });
+  log(id, `Starting minecraft server version ${config.mcVersion}`);
   for (const line of STARTUP) {
     log(id, line, "INFO", line.startsWith("Preparing") ? "Worker-Main-2" : "Server thread");
     await sleep(fast ? 5 : 120);
@@ -289,6 +291,13 @@ async function start(id: string, fast = false) {
   log(id, "Can't keep up! Is the server overloaded? Running 2044ms or 40 ticks behind", "WARN");
   log(id, 'Done (3.214s)! For help, type "help"');
   setStatus(id, "running");
+  // Lo pendiente para el mundo se aplica al arrancar.
+  const { rules } = propertiesOf(id);
+  const values = properties.get(id)?.values ?? {};
+  for (const key of worldPending.get(id) ?? []) {
+    if (key in rules) log(id, `Gamerule ${rules[key]} is now set to: ${values[key] ?? "true"}`);
+  }
+  worldPending.delete(id);
   own.push(startStats(id, fast ? 48 : 0));
   const live = find(id).config.network;
   own.push(
@@ -532,11 +541,11 @@ const backups = new Map<string, BackupInfo[]>([
   [
     "survival-con-amigos",
     [
-      backup(1.5, "auto", "world", 412_000_000, "1.21.4"),
-      backup(7.5, "auto", "world", 409_000_000, "1.21.4"),
-      backup(13.5, "auto", "world", 401_000_000, "1.21.4"),
-      backup(26, "manual", "full", 642_000_000, "1.21.4"),
-      backup(50, "preRestore", "world", 388_000_000, "1.21.4"),
+      backup(1.5, "auto", "world", 412_000_000, "26.3"),
+      backup(7.5, "auto", "world", 409_000_000, "26.3"),
+      backup(13.5, "auto", "world", 401_000_000, "26.3"),
+      backup(26, "manual", "full", 642_000_000, "26.3"),
+      backup(50, "preRestore", "world", 388_000_000, "26.3"),
     ],
   ],
   [
@@ -605,23 +614,107 @@ function remoteInfo(id: string): ModRemoteInfo[] {
     });
 }
 
-const MOD_CATALOG: [string, string, string, string, number][] = [
-  ["lithium", "Lithium", "jellysquid3", "No-compromises game logic optimization mod.", 31_200_000],
-  ["ferritecore", "FerriteCore", "malte0811", "Memory usage optimizations.", 25_400_000],
-  ["spark", "spark", "lucko", "A performance profiler: find out what is causing lag.", 9_800_000],
-  ["chunky", "Chunky", "pop4959", "Pre-generates chunks, quickly and efficiently.", 7_400_000],
-  ["krypton", "Krypton", "astei", "A mod to optimize the Minecraft networking stack.", 5_100_000],
-  ["c2me-fabric", "Concurrent Chunk Management Engine", "ishland", "Improves chunk performance.", 4_300_000],
-  ["bluemap", "BlueMap", "Blue", "A 3D map of your world in the browser.", 1_900_000],
-  ["styled-chat", "Styled Chat", "Patbox", "Colours and formatting for the server chat.", 1_200_000],
-  ["ledger", "Ledger", "PotatoPresident", "Server-side logging: who broke or placed each block.", 800_000],
+const ALL_LOADERS = ["fabric", "forge", "neoforge"];
+
+/** id, nombre, autor, descripción, descargas y loaders (nombres de Modrinth). */
+const MOD_CATALOG: [string, string, string, string, number, string[]][] = [
+  [
+    "lithium",
+    "Lithium",
+    "jellysquid3",
+    "No-compromises game logic optimization mod.",
+    31_200_000,
+    ["fabric", "neoforge"],
+  ],
+  ["ferritecore", "FerriteCore", "malte0811", "Memory usage optimizations.", 25_400_000, ALL_LOADERS],
+  [
+    "create",
+    "Create",
+    "simibubi",
+    "Building tools and aesthetic technology: gears, belts and contraptions.",
+    21_700_000,
+    ["forge", "neoforge"],
+  ],
+  ["jei", "Just Enough Items", "mezz", "View items and recipes.", 19_300_000, ALL_LOADERS],
+  ["spark", "spark", "lucko", "A performance profiler: find out what is causing lag.", 9_800_000, ALL_LOADERS],
+  [
+    "farmers-delight",
+    "Farmer's Delight",
+    "vectorwing",
+    "Farming and cooking, with new crops and meals.",
+    8_900_000,
+    ["forge", "neoforge"],
+  ],
+  ["chunky", "Chunky", "pop4959", "Pre-generates chunks, quickly and efficiently.", 7_400_000, ALL_LOADERS],
+  [
+    "mekanism",
+    "Mekanism",
+    "bradyaidanc",
+    "Machines, energy and ore processing for technology fans.",
+    6_200_000,
+    ["neoforge"],
+  ],
+  ["waystones", "Waystones", "BlayTheNinth", "Teleport back to activated waystones.", 5_600_000, ALL_LOADERS],
+  ["krypton", "Krypton", "astei", "A mod to optimize the Minecraft networking stack.", 5_100_000, ["fabric"]],
+  [
+    "modernfix",
+    "ModernFix",
+    "embeddedt",
+    "Fixes and speedups for faster launch and less memory.",
+    4_800_000,
+    ALL_LOADERS,
+  ],
+  [
+    "c2me-fabric",
+    "Concurrent Chunk Management Engine",
+    "ishland",
+    "Improves chunk performance.",
+    4_300_000,
+    ["fabric"],
+  ],
+  [
+    "sophisticated-backpacks",
+    "Sophisticated Backpacks",
+    "P3pp3rF1y",
+    "Backpacks with upgrades: sorting, pickup, crafting.",
+    3_900_000,
+    ["forge", "neoforge"],
+  ],
+  ["bluemap", "BlueMap", "Blue", "A 3D map of your world in the browser.", 1_900_000, ALL_LOADERS],
+  ["styled-chat", "Styled Chat", "Patbox", "Colours and formatting for the server chat.", 1_200_000, ["fabric"]],
+  ["ledger", "Ledger", "PotatoPresident", "Server-side logging: who broke or placed each block.", 800_000, ["fabric"]],
 ];
+
+/** Loaders de Modrinth cuyos mods carga un servidor. */
+const modrinthLoadersOf = (loader: ServerConfig["loader"]) =>
+  loader.kind === "neoForge" ? ["neoforge"] : loader.kind === "quilt" ? ["quilt", "fabric"] : [loader.kind];
+
+function modHits(query: string, loaders: string[], mcVersion: string, offset: number, limit: number) {
+  const q = query.toLowerCase();
+  const all = MOD_CATALOG.filter(
+    ([, title, , description, , own]) =>
+      own.some((l) => loaders.includes(l)) &&
+      (!q || title.toLowerCase().includes(q) || description.toLowerCase().includes(q)),
+  );
+  const hits = all.slice(offset, offset + limit).map(([pid, title, author, description, downloads, own]) => ({
+    project_id: pid,
+    slug: pid,
+    title,
+    author,
+    description,
+    downloads,
+    icon_url: null,
+    categories: own,
+    versions: [mcVersion],
+  }));
+  return { hits, total_hits: all.length, offset, limit };
+}
 
 // ---------- Propiedades ----------
 
 const rcon = "x7Kp2QmZ9vLc4RtB8nWf3HsJ6yDg1AeU";
 
-const properties = new Map<string, PropertiesView>([
+const properties = new Map<string, Pick<PropertiesView, "exists" | "values">>([
   [
     "survival-con-amigos",
     {
@@ -666,7 +759,45 @@ const properties = new Map<string, PropertiesView>([
   ],
 ]);
 
-const propertiesOf = (id: string) => properties.get(id) ?? { exists: false, values: {} };
+/** Propiedades que Minecraft 1.21.9 convirtió en reglas de juego (como el núcleo). */
+const MOVED: [string, string, string][] = [
+  ["pvp", "pvp", "pvp"],
+  ["enable-command-block", "commandBlocksEnabled", "command_blocks_work"],
+  ["allow-nether", "allowEnteringNetherUsingPortals", "allow_entering_nether_using_portals"],
+  ["spawn-monsters", "spawnMonsters", "spawn_monsters"],
+];
+
+function versionAtLeast(version: string, min: string): boolean {
+  const a = version.split(".").map(Number);
+  const b = min.split(".").map(Number);
+  for (let i = 0; i < Math.max(a.length, b.length); i++) {
+    const d = (a[i] ?? 0) - (b[i] ?? 0);
+    if (d !== 0) return d > 0;
+  }
+  return true;
+}
+
+/** Cambios para el mundo que esperan al próximo arranque, por servidor. */
+const worldPending = new Map<string, Set<string>>();
+
+function propertiesOf(id: string): PropertiesView {
+  const file = properties.get(id) ?? { exists: false, values: {} };
+  const mc = servers.find((s) => s.config.id === id)?.config.mcVersion ?? "1.21.4";
+  const rules: Record<string, string> = {};
+  for (const [key, camel, snake] of MOVED) {
+    if (versionAtLeast(mc, "1.21.11")) rules[key] = snake;
+    else if (versionAtLeast(mc, "1.21.9")) rules[key] = camel;
+  }
+  const values = { ...file.values };
+  for (const key of Object.keys(rules)) values[key] ??= "true";
+  return {
+    ...file,
+    values,
+    rules,
+    removed: versionAtLeast(mc, "1.21.2") ? ["spawn-animals", "spawn-npcs"] : [],
+    pending: [...(worldPending.get(id) ?? [])],
+  };
+}
 
 // ---------- Estadísticas ----------
 
@@ -727,22 +858,39 @@ const view = (): SettingsView => ({
 });
 
 let claimPolls = 0;
+let wizardInstalls = 0;
 
 // ---------- Crear e importar ----------
 
 const VERSIONS = [
+  "26.3",
+  "26.1.2",
+  "26.1",
+  "1.21.11",
+  "1.21.10",
+  "1.21.9",
+  "1.21.8",
   "1.21.4",
-  "1.21.3",
   "1.21.1",
-  "1.21",
   "1.20.6",
   "1.20.4",
   "1.20.1",
-  "1.19.4",
+  "1.19.2",
   "1.18.2",
   "1.16.5",
   "1.12.2",
 ];
+
+/** Versiones de Minecraft con cada loader: NeoForge empieza en 1.20.2 y Fabric en 1.14. */
+const LOADER_VERSIONS: Record<string, string[]> = {
+  fabric: VERSIONS.filter((v) => v !== "1.12.2"),
+  forge: VERSIONS,
+  neoForge: VERSIONS.slice(0, VERSIONS.indexOf("1.20.4") + 1),
+};
+
+/** Java que pide cada versión de Minecraft. */
+const javaFor = (mc: string) =>
+  /^2\d\./.test(mc) ? 25 : versionAtLeast(mc, "1.20.5") ? 21 : versionAtLeast(mc, "1.18") ? 17 : 8;
 
 const PACKS = [
   [
@@ -752,6 +900,7 @@ const PACKS = [
     "Explora planetas, construye cohetes y sobrevive en el espacio con más de 200 mods.",
     2_400_000,
     "1.20.1",
+    "forge",
   ],
   [
     "tecnologia-total",
@@ -759,7 +908,8 @@ const PACKS = [
     "ingenia",
     "Automatiza todo: fábricas, energía, tuberías y robots. Para quienes disfrutan optimizando.",
     1_350_000,
-    "1.20.1",
+    "1.21.1",
+    "neoforge",
   ],
   [
     "magia-y-dragones",
@@ -768,6 +918,7 @@ const PACKS = [
     "Hechizos, mazmorras y jefes épicos en un mundo de fantasía renovado.",
     980_000,
     "1.19.2",
+    "forge",
   ],
   [
     "supervivencia-extrema",
@@ -776,6 +927,7 @@ const PACKS = [
     "Temperatura, sed y criaturas más duras. Cada noche es un reto.",
     640_000,
     "1.21.1",
+    "fabric",
   ],
   [
     "ciudades-medievales",
@@ -784,6 +936,7 @@ const PACKS = [
     "Aldeas más vivas, estructuras nuevas y comercio entre reinos.",
     410_000,
     "1.20.1",
+    "fabric",
   ],
   [
     "optimizado-plus",
@@ -792,6 +945,7 @@ const PACKS = [
     "Vanilla de siempre con mods de rendimiento: más FPS y menos lag para el servidor.",
     3_100_000,
     "1.21.4",
+    "fabric",
   ],
 ] as const;
 
@@ -821,7 +975,7 @@ async function provision(req: NewServerRequest): Promise<ServerConfig> {
       await sleep(250);
     }
   }
-  await step({ step: "installingJava", major: 21 });
+  await step({ step: "installingJava", major: javaFor("mcVersion" in req.source ? req.source.mcVersion : "1.20.1") });
   const total = 48 * 1024 * 1024;
   for (let downloaded = 0; downloaded <= total; downloaded += total / 8) {
     await step({ step: "downloadingJava", downloaded, total });
@@ -833,26 +987,38 @@ async function provision(req: NewServerRequest): Promise<ServerConfig> {
   await sleep(400);
 
   const id = uniqueId(req.name);
+  const source = req.source;
+  const pack =
+    source.kind === "modrinth"
+      ? PACKS.find((p) => source.versionId.startsWith(`${p[0]}-`))
+      : source.kind === "curseForge"
+        ? PACKS[source.modId - 1000]
+        : undefined;
+  const mcVersion = "mcVersion" in source ? source.mcVersion : (pack?.[5] ?? "1.20.1");
+  const kind = pack ? (pack[6] === "neoforge" ? "neoForge" : pack[6]) : source.kind;
+  const loader: ServerConfig["loader"] =
+    kind === "fabric"
+      ? { kind: "fabric", loaderVersion: "0.17.2" }
+      : kind === "forge"
+        ? { kind: "forge", version: "47.4.0" }
+        : kind === "neoForge"
+          ? { kind: "neoForge", version: "21.1.209" }
+          : { kind: "vanilla" };
   const config = makeConfig({
     id,
     name: req.name,
-    mcVersion: "mcVersion" in req.source ? req.source.mcVersion : "1.20.1",
-    loader:
-      req.source.kind === "fabric"
-        ? { kind: "fabric", loaderVersion: "0.16.9" }
-        : modpack
-          ? { kind: "forge", version: "47.3.0" }
-          : { kind: "vanilla" },
-    javaMajor: 21,
+    mcVersion,
+    loader,
+    javaMajor: javaFor(mcVersion),
     memory: req.memory,
     cpu: req.cpu,
     port: req.port,
     eulaAccepted: req.eulaAccepted,
     source:
-      req.source.kind === "modrinth"
-        ? { kind: "modrinth", projectId: "aventura-cosmica", versionId: req.source.versionId }
-        : req.source.kind === "curseForge"
-          ? { kind: "curseForge", modId: req.source.modId, fileId: req.source.fileId }
+      source.kind === "modrinth"
+        ? { kind: "modrinth", projectId: pack?.[0] ?? "aventura-cosmica", versionId: source.versionId }
+        : source.kind === "curseForge"
+          ? { kind: "curseForge", modId: source.modId, fileId: source.fileId }
           : null,
     pendingOwner: req.owner,
   });
@@ -924,7 +1090,7 @@ mockIPC(
       // La app
       case "app_info":
         return {
-          version: "0.2.1",
+          version: "0.2.2",
           dataDir: DATA_DIR,
           curseforgeEnabled: secrets.curseforgeApiKey,
           language: settings.language ?? systemLang,
@@ -958,7 +1124,7 @@ mockIPC(
         await sleep(600);
         return params.get("update")
           ? {
-              version: "0.2.1",
+              version: "0.2.3",
               notes: "Copias más rápidas y correcciones en el túnel.",
               date: new Date().toISOString(),
               canInstall: true,
@@ -972,63 +1138,88 @@ mockIPC(
       case "minecraft_versions":
         await sleep(300);
         return VERSIONS.map((v) => ({ id: v, type: "release" }));
+      case "loader_game_versions":
+        await sleep(300);
+        return LOADER_VERSIONS[a.loader as string] ?? [];
       case "search_modrinth": {
         await sleep(350);
-        const q = String((a.query as { query: string }).query).toLowerCase();
-        const hits = PACKS.filter((p) => !q || p[1].toLowerCase().includes(q) || p[3].toLowerCase().includes(q)).map(
-          ([pid, title, author, description, downloads, version]) => ({
-            project_id: pid,
-            slug: pid,
-            title,
-            author,
-            description,
-            downloads,
-            icon_url: null,
-            categories: [],
-            versions: [version],
-          }),
-        );
+        const query = a.query as {
+          query: string;
+          kind: string;
+          gameVersion: string | null;
+          loader: string | null;
+          extraLoaders: string[];
+          offset: number;
+          limit: number;
+        };
+        const loaders = query.loader ? [query.loader, ...query.extraLoaders] : null;
+        if (query.kind === "mod") {
+          return modHits(query.query, loaders ?? ALL_LOADERS, query.gameVersion ?? "", query.offset, 6);
+        }
+        const q = query.query.toLowerCase();
+        const hits = PACKS.filter(
+          (p) =>
+            (!loaders || loaders.includes(p[6])) &&
+            (!q || p[1].toLowerCase().includes(q) || p[3].toLowerCase().includes(q)),
+        ).map(([pid, title, author, description, downloads, version, loader]) => ({
+          project_id: pid,
+          slug: pid,
+          title,
+          author,
+          description,
+          downloads,
+          icon_url: null,
+          categories: [loader],
+          versions: [version],
+        }));
         return { hits, total_hits: hits.length, offset: 0, limit: 24 };
       }
-      case "modrinth_versions":
+      case "modrinth_versions": {
         await sleep(300);
+        const pack = PACKS.find((p) => p[0] === a.projectId);
+        const loaders = (a.loaders as string[] | null) ?? null;
+        if (pack && loaders && !loaders.includes(pack[6])) return [];
         return ["2.4.1", "2.4.0", "2.3.2"].map((v) => ({
           id: `${a.projectId}-${v}`,
           name: v,
           version_number: v,
           version_type: "release",
-          game_versions: ["1.20.1"],
-          loaders: ["fabric"],
+          game_versions: [pack?.[5] ?? "1.20.1"],
+          loaders: [pack?.[6] ?? "fabric"],
           date_published: "2026-09-01",
         }));
+      }
       case "search_curseforge": {
         await sleep(350);
         const q = String(a.query).toLowerCase();
+        const loaders = (a.loaders as string[] | null) ?? [];
         return {
-          data: PACKS.filter((p) => !q || p[1].toLowerCase().includes(q)).map(
-            ([, name, , summary, downloadCount], i) => ({
+          data: PACKS.map((p, i) => [p, i] as const)
+            .filter(([p]) => (!loaders.length || loaders.includes(p[6])) && (!q || p[1].toLowerCase().includes(q)))
+            .map(([[, name, , summary, downloadCount, version, loader], i]) => ({
               id: 1000 + i,
               name,
               slug: slug(name),
               summary,
               downloadCount,
               logo: null,
-              latestFiles: [],
-            }),
-          ),
+              latestFiles: [{ gameVersions: [version, loaderName(loader)] }],
+            })),
         };
       }
-      case "curseforge_files":
+      case "curseforge_files": {
         await sleep(300);
+        const pack = PACKS[Number(a.modId) - 1000];
         return ["2.4.1", "2.4.0"].map((v, i) => ({
           id: 5000 + i,
           modId: a.modId,
           displayName: `Pack ${v}`,
           fileName: `pack-${v}.zip`,
-          gameVersions: ["1.20.1"],
+          gameVersions: [pack?.[5] ?? "1.20.1", loaderName(pack?.[6] ?? "forge")],
           serverPackFileId: 6000 + i,
           isServerPack: false,
         }));
+      }
 
       // Servidores
       case "list_servers":
@@ -1138,28 +1329,16 @@ mockIPC(
       }
       case "search_mods": {
         await sleep(300);
-        const q = String(a.query).toLowerCase();
-        const offset = Number(a.offset ?? 0);
-        const all = MOD_CATALOG.filter(
-          ([, title, , description]) => !q || title.toLowerCase().includes(q) || description.toLowerCase().includes(q),
-        );
-        const hits = all.slice(offset, offset + 6).map(([pid, title, author, description, downloads]) => ({
-          project_id: pid,
-          slug: pid,
-          title,
-          author,
-          description,
-          downloads,
-          icon_url: null,
-          categories: [],
-          versions: [find(id).config.mcVersion],
-        }));
-        return { hits, total_hits: all.length, offset, limit: 6 };
+        const { config } = find(id);
+        return modHits(String(a.query), modrinthLoadersOf(config.loader), config.mcVersion, Number(a.offset ?? 0), 6);
       }
       case "install_mod": {
         await sleep(1100);
         const entry = MOD_CATALOG.find(([pid]) => pid === a.projectId);
-        const file = `${a.projectId}-fabric-1.0.0.jar`;
+        if (params.get("modfail") && ++wizardInstalls === 2) {
+          throw `${entry?.[1] ?? a.projectId} no tiene ninguna versión para Minecraft ${find(id).config.mcVersion}`;
+        }
+        const file = `${a.projectId}-${modrinthLoadersOf(find(id).config.loader)[0]}-1.0.0.jar`;
         mods.set(id, [
           ...modsOf(id),
           mod(file, entry?.[1] ?? String(a.projectId), "1.0.0", String(a.projectId), false),
@@ -1221,13 +1400,21 @@ mockIPC(
         return propertiesOf(id);
       case "save_properties": {
         await sleep(200);
-        const current = propertiesOf(id);
-        const saved = {
-          exists: current.exists,
-          values: { ...current.values, ...(a.changes as Record<string, string>) },
-        };
-        properties.set(id, saved);
-        return saved;
+        const changes = a.changes as Record<string, string>;
+        const current = properties.get(id) ?? { exists: false, values: {} };
+        const { rules } = propertiesOf(id);
+        // Encendido, las reglas de juego cambian ya; el modo extremo, al arrancar.
+        const running = find(id).status === "running";
+        const pending = worldPending.get(id) ?? new Set<string>();
+        for (const [key, value] of Object.entries(changes)) {
+          if (key in rules && running) {
+            pending.delete(key);
+            log(id, `Gamerule ${rules[key]} is now set to: ${value}`);
+          } else if (key in rules || key === "hardcore") pending.add(key);
+        }
+        worldPending.set(id, pending);
+        properties.set(id, { exists: current.exists, values: { ...current.values, ...changes } });
+        return propertiesOf(id);
       }
 
       // Estadísticas

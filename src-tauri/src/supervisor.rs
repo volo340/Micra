@@ -1,11 +1,14 @@
 //! Arranque, parada y vigilancia de cada servidor en marcha.
 //!
 //! Antes de arrancar: puerto libre, RAM suficiente, `server.properties` al
-//! día, bloqueos vencidos levantados y análisis de malware de los mods.
-//! Mientras funciona: reenvía la consola, mide CPU, RAM y TPS, guarda las
-//! estadísticas, bloquea IPs sospechosas, hace las copias automáticas y los
-//! reinicios programados, abre el puerto o el túnel y avisa a la persona.
+//! día, modo extremo escrito en el mundo, bloqueos vencidos levantados y
+//! análisis de malware de los mods.
+//! Mientras funciona: reenvía la consola, aplica las reglas de juego
+//! pendientes, mide CPU, RAM y TPS, guarda las estadísticas, bloquea IPs
+//! sospechosas, hace las copias automáticas y los reinicios programados,
+//! abre el puerto o el túnel y avisa a la persona.
 
+use std::collections::BTreeMap;
 use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
@@ -24,7 +27,7 @@ use micra_core::server::process::{message_of, ServerEvent, ServerHandle, ServerS
 use micra_core::server::schedule::{ScheduleAction, Scheduler};
 use micra_core::server::stats::{self, MinuteAccumulator};
 use micra_core::server::tps::{self, TpsReading};
-use micra_core::server::{map, mods, players, ports, properties, scan};
+use micra_core::server::{gamerules, map, mods, players, ports, properties, scan, world};
 use micra_core::{hardware, tr, Error, Result};
 use tauri::async_runtime::JoinHandle;
 use tauri::AppHandle;
@@ -33,7 +36,7 @@ use tokio::sync::{broadcast, watch, Mutex};
 
 use crate::events;
 use crate::notifier::notify;
-use crate::state::{LiveInfo, RunningServer, Shared, StopReason, TunnelInfo, UpnpInfo};
+use crate::state::{LiveInfo, RunningServer, Shared, StopReason, TunnelInfo, UpnpInfo, WorldState};
 use crate::tunnel;
 
 /// Cada cuánto se miden los TPS.
@@ -62,7 +65,7 @@ pub async fn start(app: &AppHandle, state: &Shared, id: &str) -> Result<()> {
         return Err(Error::AlreadyRunning);
     }
     let dir = server_dir(state, id)?;
-    let config = ServerConfig::load(&dir).await?;
+    let mut config = ServerConfig::load(&dir).await?;
     if !config.eula_accepted {
         return Err(Error::InvalidConfig(tr!(
             "falta aceptar el EULA de Minecraft",
@@ -73,6 +76,7 @@ pub async fn start(app: &AppHandle, state: &Shared, id: &str) -> Result<()> {
     check_memory(state, &config).await?;
     let java = state.java.ensure(config.java_major, None).await?;
     prepare_properties(&dir, &config).await?;
+    let world = prepare_world(&dir, &mut config).await;
     lift_expired_bans(&dir).await;
 
     let report = scan::scan_server(&dir, None).await?;
@@ -103,6 +107,7 @@ pub async fn start(app: &AppHandle, state: &Shared, id: &str) -> Result<()> {
         started_at: Local::now(),
         stop_reason: StdMutex::new(None),
         finished,
+        world: StdMutex::new(world),
     });
     state
         .running
@@ -191,6 +196,126 @@ async fn prepare_properties(dir: &Path, config: &ServerConfig) -> Result<()> {
     Ok(())
 }
 
+/// Escribe en el mundo el modo extremo elegido con el servidor encendido o
+/// apagado (`server.properties` solo cuenta al crearlo) y lee lo que el
+/// mundo tiene guardado antes de que el servidor lo cargue.
+async fn prepare_world(dir: &Path, config: &mut ServerConfig) -> WorldState {
+    let props = properties::read_properties(dir).await.unwrap_or_default();
+    let world_dir = world::world_dir(dir, &props);
+    if let Some(hardcore) = config.world.pending_hardcore {
+        // Si el mundo aún no existe, lo crea server.properties.
+        match world::set_hardcore(&world_dir, hardcore).await {
+            Ok(_) => {
+                config.world.pending_hardcore = None;
+                if let Err(e) = save_world_tweaks(dir, |w| w.pending_hardcore = None).await {
+                    tracing::warn!("no se pudo guardar la configuración: {e}");
+                }
+            }
+            Err(e) => tracing::warn!("no se pudo cambiar el modo extremo del mundo: {e}"),
+        }
+    }
+    let rules: Vec<&str> = gamerules::moved(&config.mc_version)
+        .into_iter()
+        .map(|(property, _)| property)
+        .collect();
+    WorldState {
+        hardcore: world::read_hardcore(&world_dir).await,
+        rules: world::read_rules(&world_dir, &rules).await,
+    }
+}
+
+/// Cambia lo pendiente para el mundo en `micra.json`. La copia del servidor
+/// en marcha no se toca: nada la lee y avisaría a las tareas sin motivo.
+pub async fn save_world_tweaks(
+    dir: &Path,
+    change: impl FnOnce(&mut micra_core::server::config::WorldTweaks),
+) -> Result<()> {
+    let mut saved = ServerConfig::load(dir).await?;
+    change(&mut saved.world);
+    saved.save(dir).await
+}
+
+/// Cambia una regla de juego con el servidor encendido; `true` si respondió.
+pub async fn set_rule(server: &RunningServer, property: &str, rule: &str, value: bool) -> bool {
+    let confirmed = server
+        .handle
+        .command_and_wait(
+            &gamerules::set_command(rule, value),
+            |msg| gamerules::parse_set(msg).is_some_and(|(r, v)| r == rule && v == value),
+            Duration::from_secs(5),
+        )
+        .await
+        .unwrap_or(false);
+    if confirmed {
+        server
+            .world
+            .lock()
+            .unwrap()
+            .rules
+            .insert(property.to_string(), value);
+    }
+    confirmed
+}
+
+/// Aplica las reglas guardadas con el servidor apagado y pregunta el valor
+/// de todas: un mundo de una versión anterior aún no las tiene guardadas.
+async fn sync_rules(server: &RunningServer) {
+    let mc_version = server.config.borrow().mc_version.clone();
+    let moved = gamerules::moved(&mc_version);
+    if moved.is_empty() {
+        return;
+    }
+    let pending = ServerConfig::load(&server.dir)
+        .await
+        .map(|c| c.world.pending_rules)
+        .unwrap_or_default();
+    let mut done = Vec::new();
+    for (property, value) in &pending {
+        // Una regla que esta versión no tiene ya no se podrá aplicar.
+        let applied = match gamerules::rule_for(property, &mc_version) {
+            Some(rule) => set_rule(server, property, rule, *value).await,
+            None => true,
+        };
+        if applied {
+            done.push(property.clone());
+        }
+    }
+    if !done.is_empty() {
+        let saved = save_world_tweaks(&server.dir, |w| {
+            for property in &done {
+                w.pending_rules.remove(property);
+            }
+        });
+        if let Err(e) = saved.await {
+            tracing::warn!("no se pudo guardar la configuración: {e}");
+        }
+    }
+
+    let commands: Vec<String> = moved
+        .iter()
+        .map(|(_, rule)| gamerules::query_command(rule))
+        .collect();
+    let expected = commands.len();
+    let Ok(lines) = server
+        .handle
+        .query_all(
+            &commands,
+            gamerules::is_query_line,
+            move |lines| lines.len() >= expected,
+            Duration::from_secs(3),
+        )
+        .await
+    else {
+        return;
+    };
+    let answers: BTreeMap<String, bool> = lines
+        .iter()
+        .filter_map(|line| gamerules::parse_query(line))
+        .filter_map(|(rule, value)| Some((gamerules::property_of(&rule)?.to_string(), value)))
+        .collect();
+    server.world.lock().unwrap().rules.extend(answers);
+}
+
 /// Bloqueos temporales que vencieron con el servidor apagado.
 async fn lift_expired_bans(dir: &Path) {
     let mut guard_state = GuardState::load(dir).await;
@@ -252,6 +377,12 @@ async fn supervise(
                 match &event {
                     ServerEvent::Log { line, .. } => {
                         let msg = message_of(line);
+                        // Reglas cambiadas en la consola o por un operador en el juego.
+                        if let Some((rule, value)) = gamerules::parse_set(msg) {
+                            if let Some(property) = gamerules::property_of(&rule) {
+                                server.world.lock().unwrap().rules.insert(property.to_string(), value);
+                            }
+                        }
                         let actions = guard.on_line(msg, Instant::now(), Utc::now());
                         if !actions.is_empty() {
                             run_guard_actions(&app, &state, &handle, &name, actions);
@@ -511,6 +642,7 @@ fn spawn_ready_tasks(
                 Err(e) => tracing::warn!("no se pudo ajustar BlueMap: {e}"),
             }
         }
+        sync_rules(&server).await;
     })
 }
 

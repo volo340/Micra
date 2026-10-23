@@ -53,6 +53,7 @@ fn main() {
             app::install_app_update,
             content::minecraft_versions,
             content::search_modrinth,
+            content::loader_game_versions,
             content::modrinth_versions,
             content::curseforge_enabled,
             content::search_curseforge,

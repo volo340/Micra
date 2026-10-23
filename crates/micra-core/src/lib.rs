@@ -13,6 +13,7 @@ pub mod http;
 pub mod i18n;
 pub mod import;
 pub mod java;
+pub mod nbt;
 pub mod net;
 pub mod notify;
 pub mod paths;

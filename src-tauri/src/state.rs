@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex as StdMutex};
 use std::time::Duration;
@@ -58,6 +58,17 @@ pub struct RunningServer {
     /// `true` cuando la vigilancia terminó de recoger (puerto cerrado,
     /// estadísticas guardadas) tras apagarse.
     pub finished: watch::Sender<bool>,
+    /// El mundo está en memoria mientras funciona: lo que se sabe de él.
+    pub world: StdMutex<WorldState>,
+}
+
+/// Modo extremo con que arrancó el mundo y reglas de juego que sustituyen a
+/// propiedades (por propiedad), al día con lo que se cambia en la consola o
+/// en el juego. Mientras el servidor funciona, sus archivos no son fiables.
+#[derive(Debug, Clone, Default)]
+pub struct WorldState {
+    pub hardcore: Option<bool>,
+    pub rules: BTreeMap<String, bool>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
