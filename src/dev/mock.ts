@@ -124,9 +124,9 @@ let servers: ServerSummary[] =
           makeConfig({
             id: "survival-con-amigos",
             name: "Survival con amigos",
-            mcVersion: "1.21.4",
+            mcVersion: "26.3",
             loader: { kind: "vanilla" },
-            javaMajor: 21,
+            javaMajor: 25,
             memory: { minMb: 2048, maxMb: 4096 },
             cpu: { cores: null },
             port: 25565,
@@ -231,7 +231,6 @@ function nextAt(time: string): string {
 }
 
 const STARTUP = [
-  "Starting minecraft server version 1.21.4",
   "Loading properties",
   "Default game type: SURVIVAL",
   "Generating keypair",
@@ -282,6 +281,7 @@ async function start(id: string, fast = false) {
     tunnel: config.network.tunnel ? { kind: "starting" } : null,
     restartAt: config.schedule.dailyRestart ? nextAt(config.schedule.dailyRestart) : null,
   });
+  log(id, `Starting minecraft server version ${config.mcVersion}`);
   for (const line of STARTUP) {
     log(id, line, "INFO", line.startsWith("Preparing") ? "Worker-Main-2" : "Server thread");
     await sleep(fast ? 5 : 120);
@@ -289,6 +289,13 @@ async function start(id: string, fast = false) {
   log(id, "Can't keep up! Is the server overloaded? Running 2044ms or 40 ticks behind", "WARN");
   log(id, 'Done (3.214s)! For help, type "help"');
   setStatus(id, "running");
+  // Lo pendiente para el mundo se aplica al arrancar.
+  const { rules } = propertiesOf(id);
+  const values = properties.get(id)?.values ?? {};
+  for (const key of worldPending.get(id) ?? []) {
+    if (key in rules) log(id, `Gamerule ${rules[key]} is now set to: ${values[key] ?? "true"}`);
+  }
+  worldPending.delete(id);
   own.push(startStats(id, fast ? 48 : 0));
   const live = find(id).config.network;
   own.push(
@@ -532,11 +539,11 @@ const backups = new Map<string, BackupInfo[]>([
   [
     "survival-con-amigos",
     [
-      backup(1.5, "auto", "world", 412_000_000, "1.21.4"),
-      backup(7.5, "auto", "world", 409_000_000, "1.21.4"),
-      backup(13.5, "auto", "world", 401_000_000, "1.21.4"),
-      backup(26, "manual", "full", 642_000_000, "1.21.4"),
-      backup(50, "preRestore", "world", 388_000_000, "1.21.4"),
+      backup(1.5, "auto", "world", 412_000_000, "26.3"),
+      backup(7.5, "auto", "world", 409_000_000, "26.3"),
+      backup(13.5, "auto", "world", 401_000_000, "26.3"),
+      backup(26, "manual", "full", 642_000_000, "26.3"),
+      backup(50, "preRestore", "world", 388_000_000, "26.3"),
     ],
   ],
   [
@@ -621,7 +628,7 @@ const MOD_CATALOG: [string, string, string, string, number][] = [
 
 const rcon = "x7Kp2QmZ9vLc4RtB8nWf3HsJ6yDg1AeU";
 
-const properties = new Map<string, PropertiesView>([
+const properties = new Map<string, Pick<PropertiesView, "exists" | "values">>([
   [
     "survival-con-amigos",
     {
@@ -666,7 +673,45 @@ const properties = new Map<string, PropertiesView>([
   ],
 ]);
 
-const propertiesOf = (id: string) => properties.get(id) ?? { exists: false, values: {} };
+/** Propiedades que Minecraft 1.21.9 convirtió en reglas de juego (como el núcleo). */
+const MOVED: [string, string, string][] = [
+  ["pvp", "pvp", "pvp"],
+  ["enable-command-block", "commandBlocksEnabled", "command_blocks_work"],
+  ["allow-nether", "allowEnteringNetherUsingPortals", "allow_entering_nether_using_portals"],
+  ["spawn-monsters", "spawnMonsters", "spawn_monsters"],
+];
+
+function versionAtLeast(version: string, min: string): boolean {
+  const a = version.split(".").map(Number);
+  const b = min.split(".").map(Number);
+  for (let i = 0; i < Math.max(a.length, b.length); i++) {
+    const d = (a[i] ?? 0) - (b[i] ?? 0);
+    if (d !== 0) return d > 0;
+  }
+  return true;
+}
+
+/** Cambios para el mundo que esperan al próximo arranque, por servidor. */
+const worldPending = new Map<string, Set<string>>();
+
+function propertiesOf(id: string): PropertiesView {
+  const file = properties.get(id) ?? { exists: false, values: {} };
+  const mc = servers.find((s) => s.config.id === id)?.config.mcVersion ?? "1.21.4";
+  const rules: Record<string, string> = {};
+  for (const [key, camel, snake] of MOVED) {
+    if (versionAtLeast(mc, "1.21.11")) rules[key] = snake;
+    else if (versionAtLeast(mc, "1.21.9")) rules[key] = camel;
+  }
+  const values = { ...file.values };
+  for (const key of Object.keys(rules)) values[key] ??= "true";
+  return {
+    ...file,
+    values,
+    rules,
+    removed: versionAtLeast(mc, "1.21.2") ? ["spawn-animals", "spawn-npcs"] : [],
+    pending: [...(worldPending.get(id) ?? [])],
+  };
+}
 
 // ---------- Estadísticas ----------
 
@@ -1221,13 +1266,21 @@ mockIPC(
         return propertiesOf(id);
       case "save_properties": {
         await sleep(200);
-        const current = propertiesOf(id);
-        const saved = {
-          exists: current.exists,
-          values: { ...current.values, ...(a.changes as Record<string, string>) },
-        };
-        properties.set(id, saved);
-        return saved;
+        const changes = a.changes as Record<string, string>;
+        const current = properties.get(id) ?? { exists: false, values: {} };
+        const { rules } = propertiesOf(id);
+        // Encendido, las reglas de juego cambian ya; el modo extremo, al arrancar.
+        const running = find(id).status === "running";
+        const pending = worldPending.get(id) ?? new Set<string>();
+        for (const [key, value] of Object.entries(changes)) {
+          if (key in rules && running) {
+            pending.delete(key);
+            log(id, `Gamerule ${rules[key]} is now set to: ${value}`);
+          } else if (key in rules || key === "hardcore") pending.add(key);
+        }
+        worldPending.set(id, pending);
+        properties.set(id, { exists: current.exists, values: { ...current.values, ...changes } });
+        return propertiesOf(id);
       }
 
       // Estadísticas

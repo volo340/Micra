@@ -524,6 +524,13 @@ export const pt: Dict = {
     gamemodeApplyAll: "Aplicar a todos",
     forceGamemodeNote:
       "Ao entrar, cada jogador volta ao modo do servidor, mesmo que você tenha mudado o dele com /gamemode.",
+    hintRules:
+      "As configurações do próprio Minecraft. Quase todas valem quando o servidor reiniciar; as regras de jogo, na hora.",
+    ruleHint: "Nesta versão do Minecraft é uma regra do mundo: com o servidor ligado, muda na hora.",
+    removedNote: (list: string) => `Esta versão do Minecraft não tem mais estas opções: ${list}.`,
+    hardcoreNote: "Quem morrer vira espectador e não pode mais jogar neste mundo. A dificuldade fica em Difícil.",
+    pendingStart: "Vale quando o servidor ligar.",
+    appliedNow: "Aplicado na hora, sem reiniciar.",
     rconPasswordHint: "Se você deixar vazia ou for curta, o Micra define uma de 32 caracteres.",
     portElsewhere: "Muda-se em Rede",
     save: "Salvar propriedades",

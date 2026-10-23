@@ -243,6 +243,19 @@ impl ServerHandle {
         matcher: impl Fn(&str) -> bool + Send + Sync + 'static,
         window: Duration,
     ) -> Result<Vec<String>> {
+        self.query_all(&[command.to_string()], matcher, |_| false, window)
+            .await
+    }
+
+    /// Como `query`, con varios comandos a la vez, y termina en cuanto
+    /// `done` da la respuesta por completa.
+    pub async fn query_all(
+        &self,
+        commands: &[String],
+        matcher: impl Fn(&str) -> bool + Send + Sync + 'static,
+        done: impl Fn(&[String]) -> bool,
+        window: Duration,
+    ) -> Result<Vec<String>> {
         let (tx, mut rx) = mpsc::unbounded_channel();
         let deadline = Instant::now() + window;
         self.interceptors.lock().unwrap().push(Interceptor {
@@ -250,11 +263,16 @@ impl ServerHandle {
             deadline,
             tx,
         });
-        self.send_command(command).await?;
+        for command in commands {
+            self.send_command(command).await?;
+        }
         let mut lines = Vec::new();
         let until = tokio::time::Instant::from_std(deadline);
         while let Ok(Some(line)) = tokio::time::timeout_at(until, rx.recv()).await {
             lines.push(line);
+            if done(&lines) {
+                break;
+            }
         }
         Ok(lines)
     }

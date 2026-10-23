@@ -534,6 +534,14 @@ export const de: Dict = {
     gamemodeApplyAll: "Für alle übernehmen",
     forceGamemodeNote:
       "Beim Beitreten wechselt jeder Spieler zurück in den Modus des Servers, auch wenn du seinen Modus mit /gamemode geändert hast.",
+    hintRules:
+      "Die Einstellungen von Minecraft selbst. Die meisten gelten nach einem Neustart des Servers, Spielregeln sofort.",
+    ruleHint: "In dieser Minecraft-Version ist das eine Spielregel der Welt: Läuft der Server, ändert sie sich sofort.",
+    removedNote: (list: string) => `Diese Minecraft-Version hat diese Optionen nicht mehr: ${list}.`,
+    hardcoreNote:
+      "Wer stirbt, wird Zuschauer und kann in dieser Welt nicht mehr spielen. Der Schwierigkeitsgrad bleibt auf Schwer.",
+    pendingStart: "Gilt beim nächsten Start des Servers.",
+    appliedNow: "Sofort übernommen, ohne Neustart.",
     rconPasswordHint: "Wenn du es leer lässt oder es zu kurz ist, setzt Micra eines mit 32 Zeichen.",
     portElsewhere: "Wird unter Netzwerk geändert",
     save: "Eigenschaften speichern",

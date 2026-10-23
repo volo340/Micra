@@ -16,7 +16,7 @@ use crate::providers::loaders;
 use crate::provision::{check_port_free_among, java_major_for, unique_id, used_ports};
 use crate::server::config::{
     validate_resources, BackupPolicy, CpuConfig, LaunchTarget, Loader, MapConfig, MemoryConfig,
-    NetworkPolicy, SchedulePolicy, SecurityPolicy, ServerConfig,
+    NetworkPolicy, SchedulePolicy, SecurityPolicy, ServerConfig, WorldTweaks,
 };
 use crate::server::detect::{
     bundled_installer, detect_launch_target, detect_loader, detect_mc_version,
@@ -259,6 +259,7 @@ pub async fn import(
             },
             source: None,
             pending_owner: None,
+            world: WorldTweaks::default(),
         };
         eula::write_eula(&dest, true).await?;
         set_properties(&dest, &[("server-port", config.port.to_string())]).await?;

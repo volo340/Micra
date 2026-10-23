@@ -533,10 +533,19 @@ export const fr: Dict = {
     queryNote: "Donne des informations sur le serveur à qui les demande ; inutile pour jouer.",
     gamemodeForAll: "S’applique à tout le monde à chaque connexion, y compris à ceux qui avaient déjà joué.",
     gamemodeNewOnly:
-      "Ne change que le mode des joueurs qui se connectent pour la première fois : les autres gardent le leur.",
+      "Ne change que le mode des joueurs qui se connectent pour la première fois : les autres gardent le leur.",
     gamemodeApplyAll: "Appliquer à tous",
     forceGamemodeNote:
       "À la connexion, chaque joueur revient au mode du serveur, même si vous avez changé le sien avec /gamemode.",
+    hintRules:
+      "Les réglages de Minecraft lui-même. La plupart s’appliquent au redémarrage du serveur ; les règles du jeu, tout de suite.",
+    ruleHint:
+      "Dans cette version de Minecraft, c’est une règle du monde : quand le serveur tourne, elle change tout de suite.",
+    removedNote: (list: string) => `Cette version de Minecraft n’a plus ces options : ${list}.`,
+    hardcoreNote:
+      "Qui meurt devient spectateur et ne peut plus jouer dans ce monde. La difficulté reste sur Difficile.",
+    pendingStart: "S’applique au démarrage du serveur.",
+    appliedNow: "Appliqué tout de suite, sans redémarrer.",
     rconPasswordHint: "S’il est vide ou trop court, Micra en définit un de 32 caractères.",
     portElsewhere: "Se modifie dans Réseau",
     save: "Enregistrer les propriétés",

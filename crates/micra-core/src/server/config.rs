@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -87,6 +88,8 @@ pub struct ServerConfig {
     /// que el servidor arranca (lo pide el asistente).
     #[serde(default)]
     pub pending_owner: Option<String>,
+    #[serde(default)]
+    pub world: WorldTweaks,
 }
 
 fn default_true() -> bool {
@@ -200,6 +203,17 @@ impl Default for MapConfig {
             accepted_download: false,
         }
     }
+}
+
+/// Cambios para el mundo que esperan a que el servidor arranque.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct WorldTweaks {
+    /// Reglas de juego por propiedad (`pvp`, `allow-nether`...) que se
+    /// aplican con `/gamerule` cuando el servidor termina de arrancar.
+    pub pending_rules: BTreeMap<String, bool>,
+    /// Modo extremo que se escribe en `level.dat` antes de arrancar.
+    pub pending_hardcore: Option<bool>,
 }
 
 /// Origen del contenido instalado, para buscar y aplicar actualizaciones.
@@ -415,6 +429,7 @@ mod tests {
             map: MapConfig::default(),
             source: None,
             pending_owner: None,
+            world: WorldTweaks::default(),
         }
     }
 
@@ -456,6 +471,7 @@ mod tests {
         assert!(!cfg.network.upnp);
         assert_eq!(cfg.map.port, 8100);
         assert_eq!(cfg.source, None);
+        assert_eq!(cfg.world, WorldTweaks::default());
     }
 
     #[test]

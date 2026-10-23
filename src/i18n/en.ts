@@ -520,6 +520,13 @@ export const en: Dict = {
     gamemodeApplyAll: "Apply to everyone",
     forceGamemodeNote:
       "On joining, every player goes back to the server's game mode, even if you changed theirs with /gamemode.",
+    hintRules: "Minecraft's own settings. Most apply when the server restarts; game rules apply right away.",
+    ruleHint: "In this Minecraft version this is a world game rule: while the server is running it changes right away.",
+    removedNote: (list: string) => `This Minecraft version no longer has these options: ${list}.`,
+    hardcoreNote:
+      "Anyone who dies becomes a spectator and can't play in this world again. The difficulty stays on Hard.",
+    pendingStart: "Applies when the server starts.",
+    appliedNow: "Applied right away, no restart needed.",
     rconPasswordHint: "If you leave it empty or it's short, Micra sets a 32-character one.",
     portElsewhere: "Changed under Network",
     save: "Save properties",

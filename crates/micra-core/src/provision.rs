@@ -20,6 +20,7 @@ use crate::providers::{loaders, mojang, mrpack};
 use crate::server::config::{
     slugify, validate_resources, BackupPolicy, ContentSource, CpuConfig, LaunchTarget, Loader,
     MapConfig, MemoryConfig, NetworkPolicy, SchedulePolicy, SecurityPolicy, ServerConfig,
+    WorldTweaks,
 };
 use crate::server::detect::{
     bundled_installer, detect_launch_target, detect_loader, detect_mc_version, pack_declared_loader,
@@ -211,6 +212,7 @@ impl Provisioner<'_> {
             map,
             source: content.source,
             pending_owner: None,
+            world: WorldTweaks::default(),
         };
         eula::write_eula(dir, config.eula_accepted).await?;
         let mut values: Vec<(&str, String)> = vec![

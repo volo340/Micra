@@ -517,6 +517,14 @@ export const es = {
     gamemodeNewOnly: "Solo cambia el modo de quien entra por primera vez: quien ya había jugado sigue en el suyo.",
     gamemodeApplyAll: "Aplicar a todos",
     forceGamemodeNote: "Al entrar, cada jugador vuelve al modo del servidor aunque se lo hayas cambiado con /gamemode.",
+    hintRules:
+      "Los ajustes del propio Minecraft. Casi todos se aplican al reiniciar el servidor; las reglas de juego, al momento.",
+    ruleHint: "En esta versión de Minecraft es una regla del mundo: con el servidor encendido cambia al momento.",
+    removedNote: (list: string) => `Esta versión de Minecraft ya no tiene estas opciones: ${list}.`,
+    hardcoreNote:
+      "Quien muera pasará a espectador y no podrá volver a jugar en este mundo. La dificultad queda en Difícil.",
+    pendingStart: "Se aplicará al encender el servidor.",
+    appliedNow: "Aplicado al momento, sin reiniciar.",
     rconPasswordHint: "Si la dejas vacía o es corta, Micra pone una de 32 caracteres.",
     portElsewhere: "Se cambia en Red",
     save: "Guardar propiedades",

@@ -453,8 +453,15 @@ export interface ScanReport {
 // ---------- Propiedades, estadísticas y red ----------
 
 export interface PropertiesView {
+  /** Lo del archivo, con los valores que guarda el mundo donde mandan. */
   values: Record<string, string>;
   exists: boolean;
+  /** Propiedad → regla de juego que la sustituye en esta versión de Minecraft. */
+  rules: Record<string, string>;
+  /** Propiedades que esta versión ya no tiene. */
+  removed: string[];
+  /** Cambios para el mundo que esperan al próximo arranque. */
+  pending: string[];
 }
 
 export type StatsRange = "hour" | "day" | "week" | "month";

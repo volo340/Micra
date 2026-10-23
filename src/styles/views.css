@@ -1985,6 +1985,15 @@
   color: #ff8a8d;
 }
 
+/* Opciones que la versión de Minecraft del servidor ya no tiene. */
+.props-note {
+  grid-column: 1 / -1;
+  margin: 0;
+  padding-top: 10px;
+  color: var(--text-3);
+  font-size: 12px;
+}
+
 .secret-input {
   display: flex;
   align-items: center;
