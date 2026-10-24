@@ -76,6 +76,16 @@ pub async fn download_file(
     expected: Option<&ExpectedHash>,
     progress: Option<Progress<'_>>,
 ) -> Result<()> {
+    download_request(client.get(url), dest, expected, progress).await
+}
+
+/// Como `download_file`, con la petición ya preparada (para añadir cabeceras).
+pub async fn download_request(
+    request: reqwest::RequestBuilder,
+    dest: &Path,
+    expected: Option<&ExpectedHash>,
+    progress: Option<Progress<'_>>,
+) -> Result<()> {
     if let Some(expected) = expected {
         if dest.exists() && hash_file(dest, expected.algo).await? == expected.hex {
             return Ok(());
@@ -86,7 +96,7 @@ pub async fn download_file(
     }
 
     let tmp = part_path(dest);
-    let response = client.get(url).send().await?.error_for_status()?;
+    let response = request.send().await?.error_for_status()?;
     let total = response.content_length();
     let mut file = tokio::fs::File::create(&tmp).await?;
     let mut hasher = expected.map(|e| Hasher::new(e.algo));

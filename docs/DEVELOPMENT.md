@@ -116,8 +116,8 @@ muestra si cada `.exe` quedó firmado.
 
 ### CurseForge
 
-La API de CurseForge pide una clave gratuita (console.curseforge.com). En la
-app, cada persona puede poner la suya en **Ajustes**; con el secreto
-`MICRA_CURSEFORGE_API_KEY` los instaladores ya la traen. Si Micra se
-distribuye públicamente, conviene un pequeño proxy propio para no incrustar la
-clave en el binario.
+La API de CurseForge pide una clave gratuita (console.curseforge.com, página
+«API keys»). En la app, cada persona puede poner la suya en **Ajustes**; con
+el secreto `MICRA_CURSEFORGE_API_KEY` los instaladores ya la traen. Si Micra
+se distribuye públicamente, conviene un pequeño proxy propio para no incrustar
+la clave en el binario.

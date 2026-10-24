@@ -4,6 +4,7 @@ use micra_core::hardware::HardwareInfo;
 use micra_core::i18n::Lang;
 use micra_core::java::JavaRuntime;
 use micra_core::notify::{validate_webhook, NotifyEvent};
+use micra_core::providers::curseforge::CurseForgeClient;
 use micra_core::secrets::{SecretBackend, SecretKey};
 use micra_core::settings::AppSettings;
 use micra_core::{tr, Error};
@@ -133,6 +134,12 @@ pub async fn set_secret(
                     "esa no parece una clave de API de CurseForge",
                     "that does not look like a CurseForge API key"
                 )));
+            }
+            // Se prueba antes de guardarla. Sin conexión se guarda igual: si
+            // fallara, el error saldría al buscar.
+            let client = CurseForgeClient::new(state.http.clone(), value);
+            if matches!(client.check_key().await, Ok(false)) {
+                return Err(client.key_rejected());
             }
         }
         // La clave del túnel solo la guarda la vinculación con playit.gg.

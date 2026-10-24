@@ -215,11 +215,15 @@ Windows: %APPDATA%\Micra\Micra\data\
   `eulaAccepted: true`. Es "automático" en el sentido de que nadie edita
   archivos.
 - **API key de CurseForge**: la API exige clave (gratis en
-  console.curseforge.com). La persona puede ponerla en Ajustes (se guarda en
-  el llavero) o se lee de `MICRA_CURSEFORGE_API_KEY` en ejecución o al
-  compilar. Si la app se distribuye públicamente, conviene un pequeño proxy
-  propio para no incrustar la clave en el binario. Algunos autores bloquean
-  la descarga por terceros: la app lo detecta y lo explica.
+  console.curseforge.com, página «API keys»; la «Profile API key» del perfil
+  es otra y Micra lo explica si alguien la pega). La persona puede ponerla en
+  Ajustes, que la prueba con CurseForge antes de guardarla en el llavero, o se
+  lee de `MICRA_CURSEFORGE_API_KEY` en ejecución o al compilar. Desde el 16 de
+  julio de 2026 el CDN (forgecdn.net) también pide la clave para descargar:
+  Micra la manda solo a CurseForge y a su CDN, siempre por HTTPS. Si la app se
+  distribuye públicamente, conviene un pequeño proxy propio para no incrustar
+  la clave en el binario. Algunos autores bloquean la descarga por terceros:
+  la app lo detecta y lo explica.
 - **Seguro por defecto**: todo servidor nace con `online-mode` y lista blanca
   obligatoria; si la persona los quita, el panel lo avisa. RCON y query
   quedan apagados (Micra usa la consola); si se activa RCON, Micra le pone una
