@@ -24,6 +24,8 @@ fn main() {
 
     let state = tauri::async_runtime::block_on(state::AppState::new())
         .expect("no se pudo inicializar el estado de la app");
+    // Lo que quedó de un servidor que no se terminó de borrar.
+    tauri::async_runtime::block_on(micra_core::provision::purge_deleted(&state.paths));
 
     tauri::Builder::default()
         // Una sola Micra a la vez: dos copias se pelearían por los servidores.
@@ -52,14 +54,14 @@ fn main() {
             app::check_app_update,
             app::install_app_update,
             content::minecraft_versions,
-            content::search_modrinth,
+            content::search_content,
             content::loader_game_versions,
             content::modrinth_versions,
             content::curseforge_enabled,
-            content::search_curseforge,
             content::curseforge_files,
             servers::list_servers,
             servers::create_server,
+            servers::delete_server,
             servers::start_server,
             servers::stop_server,
             servers::restart_server,
@@ -84,6 +86,8 @@ fn main() {
             mods::quarantine_mod,
             mods::check_pack_update,
             mods::update_pack,
+            mods::dismiss_crash,
+            mods::open_crash_report,
             properties::get_properties,
             properties::save_properties,
             stats::server_stats,

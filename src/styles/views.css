@@ -294,6 +294,102 @@
 
 /* ---------- Panel del servidor ---------- */
 
+/* Por qué no arrancó: los mods que hay que quitar */
+.crash-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px 18px;
+  border-radius: var(--r-lg);
+  border: 1px solid rgba(240, 86, 90, 0.35);
+  background: var(--surface);
+  animation: rise 0.2s var(--ease);
+}
+
+.crash-card[data-tone="success"] {
+  border-color: rgba(47, 210, 122, 0.35);
+}
+
+.crash-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.crash-icon {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  background: var(--critical-soft);
+  color: var(--critical);
+  flex: none;
+}
+
+.crash-card[data-tone="success"] .crash-icon {
+  background: var(--brand-soft);
+  color: var(--good);
+}
+
+.crash-text {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.crash-text h2 {
+  font-size: 15px;
+}
+
+.crash-text p {
+  color: var(--text-2);
+  font-size: 13px;
+}
+
+.crash-group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.crash-group-title {
+  color: var(--text-3);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.crash-missing > span {
+  flex: 1;
+  min-width: 0;
+}
+
+.crash-details summary {
+  width: fit-content;
+  color: var(--text-2);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.crash-details summary:hover {
+  color: var(--text);
+}
+
+.crash-details code {
+  display: block;
+  margin-top: 8px;
+  padding: 10px 12px;
+  border-radius: var(--r-sm);
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text-2);
+  font-family: var(--mono);
+  font-size: 12px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .tiles {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -1345,6 +1441,13 @@
 }
 
 .mod-results-more {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.mod-results .mod-results-more {
   padding: 0 10px 4px;
 }
 
@@ -1664,6 +1767,14 @@
 
 .settings-card h2 svg {
   color: var(--brand);
+}
+
+.danger-card {
+  border-color: rgba(240, 86, 90, 0.3);
+}
+
+.danger-card h2 svg {
+  color: var(--critical);
 }
 
 .facts {

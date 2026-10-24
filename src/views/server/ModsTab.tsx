@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   ArrowUpCircle,
   Check,
@@ -12,13 +12,23 @@ import {
   ShieldCheck,
   Trash2,
 } from "lucide-react";
+import { MoreButton, SearchNotes, SourceTag } from "../../components/ContentSearch";
 import { useConfirm } from "../../components/Dialog";
 import { useToast } from "../../components/Toasts";
 import { Banner, CardTitle, Progress } from "../../components/ui";
 import { useT, type Dict } from "../../i18n";
-import { api, errorMessage, onProvisionStep } from "../../lib/api";
+import { api, onProvisionStep } from "../../lib/api";
 import { formatBytes, formatCompact, loaderName } from "../../lib/format";
-import type { ModInfo, ModRemoteInfo, ModrinthHit, ProvisionStep, ScanReport, ServerSummary } from "../../lib/types";
+import type {
+  ContentHit,
+  ModInfo,
+  ModRemoteInfo,
+  ProvisionStep,
+  ScanReport,
+  SearchCursor,
+  ServerSummary,
+} from "../../lib/types";
+import { useContentSearch } from "../../lib/useContentSearch";
 import { useTask } from "../../lib/useTask";
 
 function ModIcon({ url, name }: { url: string | null; name: string }) {
@@ -58,7 +68,7 @@ interface Props {
   onChanged: () => void;
 }
 
-/** Pestaña Mods: lista, actualizaciones, instalar desde Modrinth y análisis de malware. */
+/** Pestaña Mods: lista, actualizaciones, instalar desde Modrinth y CurseForge y análisis de malware. */
 export function ModsTab({ server, onError, onChanged }: Props) {
   const t = useT();
   const toast = useToast();
@@ -141,9 +151,9 @@ export function ModsTab({ server, onError, onChanged }: Props) {
     });
   };
 
-  const updateOne = (m: ModInfo, versionId: string) =>
+  const updateOne = (m: ModInfo, info: ModRemoteInfo, versionId: string) =>
     withWork(m.fileName, async () => {
-      await api.updateMod(id, m.fileName, versionId);
+      await api.updateMod(id, m.fileName, info.source, versionId);
       const list = await load();
       if (list.length) await checkUpdates(true);
       onChanged();
@@ -155,9 +165,9 @@ export function ModsTab({ server, onError, onChanged }: Props) {
     withWork("all", async () => {
       let done = 0;
       for (const m of updatable) {
-        const update = remote[m.sha1]?.update;
-        if (!update) continue;
-        await api.updateMod(id, m.fileName, update.versionId);
+        const info = remote[m.sha1];
+        if (!info?.update) continue;
+        await api.updateMod(id, m.fileName, info.source, info.update.versionId);
         done++;
       }
       const list = await load();
@@ -301,6 +311,7 @@ export function ModsTab({ server, onError, onChanged }: Props) {
               const info = remote[m.sha1];
               const title = info?.title ?? m.name ?? m.fileName;
               const version = m.version ?? info?.versionNumber;
+              const clientOnly = m.clientOnly || Boolean(info?.clientOnly);
               return (
                 <li key={m.fileName} className="row" data-off={!m.enabled || undefined}>
                   <ModIcon url={info?.iconUrl ?? null} name={title} />
@@ -310,6 +321,12 @@ export function ModsTab({ server, onError, onChanged }: Props) {
                       {version && <span className="subtle"> {version}</span>}
                     </span>
                     <span className="row-tags">
+                      {clientOnly && (
+                        <span className="tag" data-tone="warning" title={t.mods.clientOnlyHint}>
+                          {t.mods.clientOnly}
+                        </span>
+                      )}
+                      {info && <SourceTag source={info.source} />}
                       {m.fromPack && <span className="tag">{t.mods.fromPack}</span>}
                       {!m.enabled && <span className="tag">{t.mods.disabled}</span>}
                       <span className="subtle mono ellipsis" title={m.fileName}>
@@ -322,7 +339,7 @@ export function ModsTab({ server, onError, onChanged }: Props) {
                     {info?.update && (
                       <button
                         className="btn btn-secondary btn-sm"
-                        onClick={() => updateOne(m, info.update!.versionId)}
+                        onClick={() => updateOne(m, info, info.update!.versionId)}
                         disabled={locked}
                       >
                         <ArrowUpCircle size={14} />
@@ -358,7 +375,7 @@ export function ModsTab({ server, onError, onChanged }: Props) {
       <ModSearch
         server={server}
         locked={locked}
-        installedProjects={new Set((mods ?? []).flatMap((m) => remote[m.sha1]?.projectId ?? []))}
+        installedProjects={new Set((mods ?? []).flatMap((m) => (remote[m.sha1] ? [modKey(remote[m.sha1])] : [])))}
         onInstalled={() => load()}
         onError={onError}
       />
@@ -423,11 +440,13 @@ export function ModsTab({ server, onError, onChanged }: Props) {
   );
 }
 
-/** Buscar e instalar mods de Modrinth compatibles con el servidor. */
+const modKey = (m: { source: string; projectId: string }) => `${m.source}:${m.projectId}`;
+
+/** Buscar e instalar mods de Modrinth y CurseForge compatibles con el servidor. */
 function ModSearch(props: {
   server: ServerSummary;
   locked: boolean;
-  /** Proyectos de Modrinth que ya están en la carpeta de mods. */
+  /** Proyectos (fuente e id) que ya están en la carpeta de mods. */
   installedProjects: Set<string>;
   onInstalled: () => void;
   onError: (e: unknown) => void;
@@ -436,43 +455,21 @@ function ModSearch(props: {
   const toast = useToast();
   const { config } = props.server;
   const [query, setQuery] = useState("");
-  const [hits, setHits] = useState<ModrinthHit[] | null>(null);
-  const [total, setTotal] = useState(0);
-  const [error, setError] = useState<string | null>(null);
   const [installing, setInstalling] = useState<string | null>(null);
   const [installed, setInstalled] = useState<Set<string>>(new Set());
-  const request = useRef(0);
+  const fetchPage = useCallback(
+    (q: string, cursor: SearchCursor | null) => api.searchMods(config.id, q, cursor),
+    [config.id],
+  );
+  const search = useContentSearch(query, fetchPage);
+  const hits = search.hits;
 
-  useEffect(() => {
-    const ticket = ++request.current;
-    const timer = window.setTimeout(
-      () => {
-        setError(null);
-        api
-          .searchMods(config.id, query)
-          .then((r) => {
-            if (ticket !== request.current) return;
-            setHits(r.hits);
-            setTotal(r.total_hits);
-          })
-          .catch((e) => ticket === request.current && setError(errorMessage(e)));
-      },
-      query ? 350 : 0,
-    );
-    return () => window.clearTimeout(timer);
-  }, [config.id, query]);
-
-  const more = () =>
-    api
-      .searchMods(config.id, query, hits?.length ?? 0)
-      .then((r) => setHits((h) => [...(h ?? []), ...r.hits]))
-      .catch((e) => setError(errorMessage(e)));
-
-  const install = async (hit: ModrinthHit) => {
-    setInstalling(hit.project_id);
+  const install = async (hit: ContentHit) => {
+    const key = modKey({ source: hit.source, projectId: hit.id });
+    setInstalling(key);
     try {
-      const files = await api.installMod(config.id, hit.project_id);
-      setInstalled((s) => new Set(s).add(hit.project_id));
+      const files = await api.installMod(config.id, hit.source, hit.id);
+      setInstalled((s) => new Set(s).add(key));
       toast({ tone: "success", title: t.mods.installedOk(hit.title), message: files.join(", ") });
       props.onInstalled();
     } catch (e) {
@@ -496,10 +493,21 @@ function ModSearch(props: {
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           placeholder={t.mods.searchPlaceholder}
+          aria-label={t.mods.searchPlaceholder}
         />
       </div>
-      {error ? (
-        <Banner tone="critical">{t.mods.searchFailed(error)}</Banner>
+      <SearchNotes search={search} />
+      {search.error && hits === null ? (
+        <Banner
+          tone="critical"
+          action={
+            <button className="btn btn-secondary btn-sm" onClick={search.retry}>
+              {t.common.retry}
+            </button>
+          }
+        >
+          {t.search.failed(search.error)}
+        </Banner>
       ) : hits === null ? (
         <p className="subtle">{t.common.loading}</p>
       ) : hits.length === 0 ? (
@@ -507,46 +515,44 @@ function ModSearch(props: {
       ) : (
         <>
           <ul className="rows rows-flush">
-            {hits.map((h) => (
-              <li key={h.project_id} className="row">
-                <ModIcon url={h.icon_url} name={h.title} />
-                <span className="row-main">
-                  <span className="row-title">
-                    {h.title}
-                    <span className="subtle"> · {h.author}</span>
-                  </span>
-                  <span className="row-desc">{h.description}</span>
-                </span>
-                <span className="row-actions">
-                  <span className="subtle downloads">
-                    <Download size={12} />
-                    {formatCompact(h.downloads)}
-                  </span>
-                  {installed.has(h.project_id) || props.installedProjects.has(h.project_id) ? (
-                    <span className="inline-ok">
-                      <Check size={14} />
-                      {t.mods.installedTag}
+            {hits.map((h) => {
+              const key = modKey({ source: h.source, projectId: h.id });
+              return (
+                <li key={key} className="row">
+                  <ModIcon url={h.iconUrl} name={h.title} />
+                  <span className="row-main">
+                    <span className="row-title">
+                      {h.title}
+                      {h.author && <span className="subtle"> · {h.author}</span>}
                     </span>
-                  ) : (
-                    <button
-                      className="btn btn-secondary btn-sm"
-                      onClick={() => install(h)}
-                      disabled={props.locked || installing !== null}
-                    >
-                      {installing === h.project_id ? t.mods.installing : t.mods.install}
-                    </button>
-                  )}
-                </span>
-              </li>
-            ))}
+                    <span className="row-desc">{h.description}</span>
+                  </span>
+                  <span className="row-actions">
+                    <SourceTag source={h.source} />
+                    <span className="subtle downloads">
+                      <Download size={12} />
+                      {formatCompact(h.downloads)}
+                    </span>
+                    {installed.has(key) || props.installedProjects.has(key) ? (
+                      <span className="inline-ok">
+                        <Check size={14} />
+                        {t.mods.installedTag}
+                      </span>
+                    ) : (
+                      <button
+                        className="btn btn-secondary btn-sm"
+                        onClick={() => install(h)}
+                        disabled={props.locked || installing !== null}
+                      >
+                        {installing === key ? t.mods.installing : t.mods.install}
+                      </button>
+                    )}
+                  </span>
+                </li>
+              );
+            })}
           </ul>
-          {hits.length < total && (
-            <div>
-              <button className="btn btn-ghost btn-sm" onClick={more}>
-                {t.mods.more}
-              </button>
-            </div>
-          )}
+          <MoreButton search={search} />
         </>
       )}
     </section>

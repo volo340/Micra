@@ -91,13 +91,42 @@ pub struct CfMod {
     #[serde(default)]
     pub latest_files_indexes: Vec<CfFileIndex>,
     pub allow_mod_distribution: Option<bool>,
+    #[serde(default)]
+    pub authors: Vec<CfAuthor>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct CfAuthor {
+    pub name: String,
+}
+
+/// El archivo más reciente de un proyecto para una versión del juego y un
+/// loader.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CfFileIndex {
     #[serde(default)]
+    pub game_version: String,
+    #[serde(default)]
+    pub file_id: u64,
+    #[serde(default)]
+    pub filename: String,
+    /// 1 = release, 2 = beta, 3 = alpha.
+    #[serde(default)]
+    pub release_type: Option<u8>,
+    #[serde(default)]
     pub mod_loader: Option<u8>,
+}
+
+impl CfFileIndex {
+    /// Si es de alguno de estos loaders. Los que no dicen el suyo se quedan.
+    fn matches_loaders(&self, wanted: &[&str]) -> bool {
+        match LOADERS.iter().find(|(id, ..)| Some(*id) == self.mod_loader) {
+            Some((_, name, _)) => wanted.contains(name),
+            None => self.mod_loader.is_none(),
+        }
+    }
 }
 
 impl CfMod {
@@ -120,6 +149,33 @@ impl CfMod {
     pub fn matches_loaders(&self, wanted: &[&str]) -> bool {
         let own = self.loaders();
         own.is_empty() || own.iter().any(|l| wanted.contains(l))
+    }
+
+    /// Si su archivo más reciente dice que es solo para el cliente.
+    pub fn is_client_only(&self) -> bool {
+        self.latest_files
+            .iter()
+            .max_by_key(|f| f.id)
+            .is_some_and(CfFile::is_client_only)
+    }
+
+    /// Archivo más nuevo que `current` para esta versión del juego y alguno
+    /// de estos loaders: la release más nueva y, si no hay, el más nuevo.
+    pub fn update_for(
+        &self,
+        current: u64,
+        game_version: &str,
+        loaders: &[&str],
+    ) -> Option<&CfFileIndex> {
+        let newer = || {
+            self.latest_files_indexes.iter().filter(|i| {
+                i.file_id > current && i.game_version == game_version && i.matches_loaders(loaders)
+            })
+        };
+        newer()
+            .filter(|i| i.release_type.is_none_or(|t| t == 1))
+            .max_by_key(|i| i.file_id)
+            .or_else(|| newer().max_by_key(|i| i.file_id))
     }
 }
 
@@ -144,6 +200,25 @@ pub struct CfFile {
     #[serde(default)]
     pub hashes: Vec<CfHash>,
     pub file_length: u64,
+    /// 1 = release, 2 = beta, 3 = alpha.
+    #[serde(default)]
+    pub release_type: Option<u8>,
+    #[serde(default)]
+    pub dependencies: Vec<CfDependency>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CfDependency {
+    pub mod_id: u64,
+    /// 3 = obligatoria (2 = opcional, 5 = incompatible...).
+    pub relation_type: u8,
+}
+
+impl CfDependency {
+    pub fn is_required(&self) -> bool {
+        self.relation_type == 3
+    }
 }
 
 impl CfFile {
@@ -170,7 +245,27 @@ impl CfFile {
         own.is_empty() || own.iter().any(|l| wanted.contains(l))
     }
 
-    fn sha1(&self) -> Option<&str> {
+    /// Si vale para esta versión de Minecraft y alguno de estos loaders.
+    pub fn fits(&self, game_version: &str, loaders: &[&str]) -> bool {
+        self.game_versions.iter().any(|v| v == game_version) && self.matches_loaders(loaders)
+    }
+
+    pub fn is_release(&self) -> bool {
+        self.release_type.is_none_or(|t| t == 1)
+    }
+
+    /// CurseForge marca el entorno entre las versiones ("Client", "Server"):
+    /// solo cliente si dice "Client" y no "Server".
+    pub fn is_client_only(&self) -> bool {
+        let has = |label: &str| {
+            self.game_versions
+                .iter()
+                .any(|v| v.eq_ignore_ascii_case(label))
+        };
+        has("Client") && !has("Server")
+    }
+
+    pub fn sha1(&self) -> Option<&str> {
         // algo: 1 = SHA1, 2 = MD5
         self.hashes
             .iter()
@@ -226,6 +321,25 @@ impl CurseForgeClient {
         query: &[(&str, String)],
     ) -> Result<Envelope<T>> {
         let res = self.send(path, query).await?;
+        if rejects_key(res.status()) {
+            return Err(self.key_rejected());
+        }
+        Ok(res.error_for_status()?.json().await?)
+    }
+
+    async fn post<T: serde::de::DeserializeOwned>(
+        &self,
+        path: &str,
+        body: &serde_json::Value,
+    ) -> Result<Envelope<T>> {
+        let res = self
+            .http
+            .post(format!("{API}{path}"))
+            .header("x-api-key", &self.api_key)
+            .header("Accept", "application/json")
+            .json(body)
+            .send()
+            .await?;
         if rejects_key(res.status()) {
             return Err(self.key_rejected());
         }
@@ -325,6 +439,53 @@ impl CurseForgeClient {
             .data)
     }
 
+    /// Archivos de un mod que valen para esta versión de Minecraft y alguno
+    /// de estos loaders, del más nuevo al más antiguo.
+    pub async fn files_for(
+        &self,
+        mod_id: u64,
+        game_version: &str,
+        loaders: &[&str],
+    ) -> Result<Vec<CfFile>> {
+        let mut files = self.files(mod_id, Some(game_version)).await?;
+        files.retain(|f| f.fits(game_version, loaders) && f.is_server_pack != Some(true));
+        files.sort_by_key(|f| std::cmp::Reverse(f.id));
+        Ok(files)
+    }
+
+    /// El archivo que conviene instalar: la release más nueva y, si no hay,
+    /// el archivo más nuevo.
+    pub async fn best_file(
+        &self,
+        mod_id: u64,
+        game_version: &str,
+        loaders: &[&str],
+    ) -> Result<CfFile> {
+        let files = self.files_for(mod_id, game_version, loaders).await?;
+        files
+            .iter()
+            .find(|f| f.is_release())
+            .or(files.first())
+            .cloned()
+            .ok_or_else(|| {
+                Error::NotFound(tr!(
+                    "una versión del mod {mod_id} de CurseForge para Minecraft {game_version}",
+                    "a version of CurseForge mod {mod_id} for Minecraft {game_version}"
+                ))
+            })
+    }
+
+    /// Datos de varios proyectos a la vez (nombre, icono...).
+    pub async fn mods(&self, ids: &[u64]) -> Result<Vec<CfMod>> {
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        Ok(self
+            .post("/mods", &serde_json::json!({ "modIds": ids }))
+            .await?
+            .data)
+    }
+
     pub async fn file(&self, mod_id: u64, file_id: u64) -> Result<CfFile> {
         Ok(self
             .get(&format!("/mods/{mod_id}/files/{file_id}"), &[])
@@ -357,12 +518,13 @@ impl CurseForgeClient {
             Some(u) => u.clone(),
             None => self.download_url(file).await?,
         };
-        let expected = file.sha1().map(|h| ExpectedHash::new(HashAlgo::Sha1, h));
-        let mut request = self.http.get(&url);
-        // Desde el 16 de julio de 2026 el CDN de CurseForge también pide la clave.
-        if is_curseforge_host(&url) {
-            request = request.header("x-api-key", &self.api_key);
+        // Solo desde CurseForge y su CDN, que desde el 16 de julio de 2026
+        // también pide la clave.
+        if !is_curseforge_host(&url) {
+            return Err(Error::DisallowedUrl(url));
         }
+        let expected = file.sha1().map(|h| ExpectedHash::new(HashAlgo::Sha1, h));
+        let request = self.http.get(&url).header("x-api-key", &self.api_key);
         download_request(request, dest, expected.as_ref(), progress).await
     }
 
@@ -432,15 +594,57 @@ mod tests {
                 is_server_pack: None,
                 hashes: vec![],
                 file_length: 0,
+                release_type: Some(1),
+                dependencies: vec![],
             }],
             latest_files_indexes: indexes
                 .iter()
-                .map(|id| CfFileIndex {
-                    mod_loader: Some(*id),
-                })
+                .map(|id| index(3, "1.20.1", *id, 1))
                 .collect(),
             allow_mod_distribution: Some(true),
+            authors: vec![],
         }
+    }
+
+    fn index(file_id: u64, game_version: &str, loader: u8, release_type: u8) -> CfFileIndex {
+        CfFileIndex {
+            game_version: game_version.into(),
+            file_id,
+            filename: format!("mod-{file_id}.jar"),
+            release_type: Some(release_type),
+            mod_loader: Some(loader),
+        }
+    }
+
+    #[test]
+    fn updates_of_a_mod() {
+        let mut m = pack(&[], &["1.20.1", "Forge"]);
+        m.latest_files_indexes = vec![
+            index(10, "1.20.1", 1, 1),
+            index(14, "1.20.1", 1, 2),
+            index(12, "1.20.1", 4, 1),
+            index(20, "1.21.1", 1, 1),
+            index(11, "1.20.1", 1, 1),
+        ];
+        let id = |i: Option<&CfFileIndex>| i.map(|i| i.file_id);
+        // La release más nueva antes que una beta más nueva.
+        assert_eq!(id(m.update_for(10, "1.20.1", &["forge"])), Some(11));
+        // Si no hay release más nueva, la beta.
+        assert_eq!(id(m.update_for(11, "1.20.1", &["forge"])), Some(14));
+        assert_eq!(id(m.update_for(14, "1.20.1", &["forge"])), None);
+        // Nunca de otro loader ni de otra versión del juego.
+        assert_eq!(id(m.update_for(10, "1.20.1", &["fabric"])), Some(12));
+        assert_eq!(id(m.update_for(12, "1.20.1", &["fabric"])), None);
+        assert_eq!(id(m.update_for(20, "1.21.1", &["forge"])), None);
+    }
+
+    #[test]
+    fn client_only_files() {
+        let file = |labels: &[&str]| pack(&[], labels).latest_files[0].clone();
+        assert!(file(&["1.21.1", "Fabric", "Client"]).is_client_only());
+        assert!(!file(&["1.21.1", "Fabric", "Client", "Server"]).is_client_only());
+        assert!(!file(&["1.21.1", "Fabric"]).is_client_only());
+        assert!(pack(&[], &["1.21.1", "client"]).is_client_only());
     }
 
     #[test]

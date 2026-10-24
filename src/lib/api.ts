@@ -12,9 +12,10 @@ import type {
   BackupInfo,
   BackupScope,
   CfFile,
-  CfSearchResponse,
   Claim,
   ClaimProgress,
+  ContentPage,
+  ContentQuery,
   HardwareInfo,
   ImportAnalysis,
   ImportRequest,
@@ -24,7 +25,6 @@ import type {
   ModInfo,
   ModLoader,
   ModRemoteInfo,
-  ModrinthSearchResponse,
   ModrinthVersion,
   NetworkInfo,
   NewServerRequest,
@@ -34,6 +34,8 @@ import type {
   PropertiesView,
   ProvisionStep,
   ScanReport,
+  SearchCursor,
+  SearchSource,
   SecretKey,
   ServerConfig,
   ServerEventPayload,
@@ -66,41 +68,19 @@ export const api = {
   // Contenido para crear servidores
   minecraftVersions: () => invoke<MinecraftVersion[]>("minecraft_versions"),
   loaderGameVersions: (loader: ModLoader) => invoke<string[]>("loader_game_versions", { loader }),
-  /** Modpacks de alguno de estos loaders (nombres de Modrinth: "fabric", "forge", "neoforge"). */
-  searchModrinth: (query: string, loaders: string[]) =>
-    invoke<ModrinthSearchResponse>("search_modrinth", {
-      query: {
-        query,
-        kind: "modpack",
-        gameVersion: null,
-        loader: loaders[0] ?? null,
-        extraLoaders: loaders.slice(1),
-        limit: 24,
-        offset: 0,
-      },
-    }),
-  /** Mods para un servidor que aún no existe (en uno creado, `searchMods`). */
-  searchModrinthMods: (query: string, gameVersion: string, loaders: string[], offset = 0) =>
-    invoke<ModrinthSearchResponse>("search_modrinth", {
-      query: {
-        query,
-        kind: "mod",
-        gameVersion,
-        loader: loaders[0] ?? null,
-        extraLoaders: loaders.slice(1),
-        limit: 20,
-        offset,
-      },
-    }),
+  /**
+   * Mods o modpacks de Modrinth y CurseForge (si hay clave) a la vez. Para un
+   * servidor que ya existe, `searchMods`.
+   */
+  searchContent: (query: ContentQuery) => invoke<ContentPage>("search_content", { query }),
   modrinthVersions: (projectId: string, loaders: string[]) =>
     invoke<ModrinthVersion[]>("modrinth_versions", { projectId, gameVersion: null, loaders }),
-  searchCurseForge: (query: string, loaders: string[]) =>
-    invoke<CfSearchResponse>("search_curseforge", { query, class: "modpack", gameVersion: null, loaders, index: 0 }),
   curseForgeFiles: (modId: number) => invoke<CfFile[]>("curseforge_files", { modId, gameVersion: null }),
 
   // Servidores
   listServers: () => invoke<ServerSummary[]>("list_servers"),
   createServer: (request: NewServerRequest) => invoke<ServerConfig>("create_server", { request }),
+  deleteServer: (id: string, deleteBackups: boolean) => invoke<void>("delete_server", { id, deleteBackups }),
   startServer: (id: string) => invoke<void>("start_server", { id }),
   stopServer: (id: string) => invoke<void>("stop_server", { id }),
   restartServer: (id: string) => invoke<void>("restart_server", { id }),
@@ -127,16 +107,19 @@ export const api = {
     invoke<string>("set_mod_enabled", { id, fileName, enabled }),
   removeMod: (id: string, fileName: string) => invoke<void>("remove_mod", { id, fileName }),
   checkModUpdates: (id: string) => invoke<ModRemoteInfo[]>("check_mod_updates", { id }),
-  updateMod: (id: string, fileName: string, versionId: string) =>
-    invoke<string>("update_mod", { id, fileName, versionId }),
-  searchMods: (id: string, query: string, offset = 0) =>
-    invoke<ModrinthSearchResponse>("search_mods", { id, query, offset }),
-  installMod: (id: string, projectId: string, versionId: string | null = null) =>
-    invoke<string[]>("install_mod", { id, projectId, versionId }),
+  updateMod: (id: string, fileName: string, source: SearchSource, versionId: string) =>
+    invoke<string>("update_mod", { id, fileName, source, versionId }),
+  /** Mods de Modrinth y CurseForge para este servidor. */
+  searchMods: (id: string, query: string, cursor: SearchCursor | null = null) =>
+    invoke<ContentPage>("search_mods", { id, query, cursor }),
+  installMod: (id: string, source: SearchSource, projectId: string, versionId: string | null = null) =>
+    invoke<string[]>("install_mod", { id, source, projectId, versionId }),
   scanMods: (id: string) => invoke<ScanReport>("scan_mods", { id }),
   quarantineMod: (id: string, path: string) => invoke<void>("quarantine_mod", { id, path }),
   checkPackUpdate: (id: string) => invoke<PackUpdate | null>("check_pack_update", { id }),
   updatePack: (id: string, target: UpdateTarget) => invoke<ServerConfig>("update_pack", { id, target }),
+  dismissCrash: (id: string) => invoke<void>("dismiss_crash", { id }),
+  openCrashReport: (id: string) => invoke<void>("open_crash_report", { id }),
 
   // server.properties
   getProperties: (id: string) => invoke<PropertiesView>("get_properties", { id }),

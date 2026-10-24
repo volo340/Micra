@@ -10,17 +10,19 @@ import { useT } from "../../i18n";
 import { api } from "../../lib/api";
 import type { ServerSummary } from "../../lib/types";
 import type { AppData } from "../../lib/useAppData";
+import { CrashCard } from "./CrashCard";
 
 interface Props {
   server: ServerSummary;
   data: AppData;
   onTab: (tab: ServerTab) => void;
+  onStart: () => void;
   onCommand: (command: string) => void;
   onError: (e: unknown) => void;
 }
 
-/** Pestaña Panel: avisos, cifras en vivo, consola, direcciones y jugadores. */
-export function Overview({ server, data, onTab, onCommand, onError }: Props) {
+/** Pestaña Panel: por qué falló, avisos, cifras en vivo, consola, direcciones y jugadores. */
+export function Overview({ server, data, onTab, onStart, onCommand, onError }: Props) {
   const t = useT();
   const toast = useToast();
   const { config, status, players, live } = server;
@@ -157,6 +159,7 @@ export function Overview({ server, data, onTab, onCommand, onError }: Props) {
 
   return (
     <>
+      {live.crash && <CrashCard server={server} onTab={onTab} onStart={onStart} onError={onError} />}
       {banners.length > 0 && <div className="banners">{banners}</div>}
 
       <div className="tiles">

@@ -1,14 +1,16 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useState } from "react";
 import { Check, Download, PackageSearch, Plus, RefreshCw, Search, X } from "lucide-react";
+import { MoreButton, SearchNotes, SourceTag } from "../../components/ContentSearch";
 import { useT } from "../../i18n";
-import { api, errorMessage } from "../../lib/api";
+import { api } from "../../lib/api";
 import { formatCompact } from "../../lib/format";
-import type { ModrinthHit } from "../../lib/types";
-import type { ModChoice } from "./draft";
+import type { ContentHit, SearchCursor } from "../../lib/types";
+import { useContentSearch } from "../../lib/useContentSearch";
+import { modKey, type ModChoice } from "./draft";
 import { PackIcon } from "./PackStep";
 
 interface Props {
-  /** Loaders de Modrinth cuyos mods valen ("fabric", "neoforge"...). */
+  /** Loaders cuyos mods valen (nombres de Modrinth: "fabric", "neoforge"...). */
   loaders: string[];
   /** Nombre del loader para los textos. */
   loaderName: string;
@@ -17,51 +19,26 @@ interface Props {
   onChange: (mods: ModChoice[]) => void;
 }
 
-/** Paso opcional: mods de Modrinth que se instalan al crear el servidor. */
+/** Paso opcional: mods de Modrinth y CurseForge que se instalan al crear el servidor. */
 export function ModsStep({ loaders, loaderName, mcVersion, value, onChange }: Props) {
   const t = useT();
   const [query, setQuery] = useState("");
-  const [attempt, setAttempt] = useState(0);
-  const [hits, setHits] = useState<ModrinthHit[] | null>(null);
-  const [total, setTotal] = useState(0);
-  const [error, setError] = useState<string | null>(null);
-  const request = useRef(0);
   const loaderKey = loaders.join(",");
+  const fetchPage = useCallback(
+    (q: string, cursor: SearchCursor | null) =>
+      api.searchContent({ query: q, kind: "mod", gameVersion: mcVersion, loaders: loaderKey.split(","), cursor }),
+    [mcVersion, loaderKey],
+  );
+  const search = useContentSearch(query, fetchPage);
+  const hits = search.hits;
 
-  useEffect(() => {
-    const ticket = ++request.current;
-    setHits(null);
-    const timer = window.setTimeout(
-      () => {
-        setError(null);
-        api
-          .searchModrinthMods(query, mcVersion, loaderKey.split(","))
-          .then((r) => {
-            if (ticket !== request.current) return;
-            setHits(r.hits);
-            setTotal(r.total_hits);
-          })
-          .catch((e) => ticket === request.current && setError(errorMessage(e)));
-      },
-      query ? 350 : 0,
-    );
-    return () => window.clearTimeout(timer);
-  }, [query, mcVersion, loaderKey, attempt]);
-
-  const more = () => {
-    const ticket = request.current;
-    api
-      .searchModrinthMods(query, mcVersion, loaders, hits?.length ?? 0)
-      .then((r) => ticket === request.current && setHits((h) => [...(h ?? []), ...r.hits]))
-      .catch((e) => ticket === request.current && setError(errorMessage(e)));
+  const chosen = new Set(value.map(modKey));
+  const remove = (key: string) => onChange(value.filter((m) => modKey(m) !== key));
+  const toggle = (h: ContentHit) => {
+    const pick: ModChoice = { source: h.source, projectId: h.id, title: h.title, iconUrl: h.iconUrl };
+    if (chosen.has(modKey(pick))) remove(modKey(pick));
+    else onChange([...value, pick]);
   };
-
-  const chosen = new Set(value.map((m) => m.projectId));
-  const remove = (projectId: string) => onChange(value.filter((m) => m.projectId !== projectId));
-  const toggle = (h: ModrinthHit) =>
-    chosen.has(h.project_id)
-      ? remove(h.project_id)
-      : onChange([...value, { projectId: h.project_id, title: h.title, iconUrl: h.icon_url }]);
 
   return (
     <div className="step">
@@ -75,13 +52,13 @@ export function ModsStep({ loaders, loaderName, mcVersion, value, onChange }: Pr
           <span className="field-label">{t.wizard.modsChosen(value.length)}</span>
           <div className="mod-picks">
             {value.map((m) => (
-              <span key={m.projectId} className="mod-pick">
+              <span key={modKey(m)} className="mod-pick">
                 <PackIcon url={m.iconUrl} title={m.title} size={22} />
                 <span className="ellipsis">{m.title}</span>
                 <button
                   type="button"
                   className="mod-pick-remove"
-                  onClick={() => remove(m.projectId)}
+                  onClick={() => remove(modKey(m))}
                   aria-label={t.wizard.modRemove(m.title)}
                   title={t.wizard.modRemove(m.title)}
                 >
@@ -104,10 +81,12 @@ export function ModsStep({ loaders, loaderName, mcVersion, value, onChange }: Pr
         />
       </div>
 
-      {error ? (
+      <SearchNotes search={search} />
+
+      {search.error && hits === null ? (
         <div className="notice" data-tone="error">
-          <span>{t.wizard.searchFailed(error)}</span>
-          <button className="btn btn-secondary btn-sm" onClick={() => setAttempt((n) => n + 1)}>
+          <span>{t.search.failed(search.error)}</span>
+          <button className="btn btn-secondary btn-sm" onClick={search.retry}>
             <RefreshCw size={14} /> {t.common.retry}
           </button>
         </div>
@@ -129,18 +108,20 @@ export function ModsStep({ loaders, loaderName, mcVersion, value, onChange }: Pr
         <div className="mod-results">
           <ul className="rows">
             {hits.map((h) => {
-              const selected = chosen.has(h.project_id);
+              const key = modKey({ source: h.source, projectId: h.id });
+              const selected = chosen.has(key);
               return (
-                <li key={h.project_id} className="row" data-selected={selected || undefined}>
-                  <PackIcon url={h.icon_url} title={h.title} size={36} />
+                <li key={key} className="row" data-selected={selected || undefined}>
+                  <PackIcon url={h.iconUrl} title={h.title} size={36} />
                   <span className="row-main">
                     <span className="row-title">
                       {h.title}
-                      <span className="subtle"> · {t.wizard.by(h.author)}</span>
+                      {h.author && <span className="subtle"> · {t.wizard.by(h.author)}</span>}
                     </span>
                     <span className="row-desc">{h.description}</span>
                   </span>
                   <span className="row-actions">
+                    <SourceTag source={h.source} />
                     <span className="subtle downloads">
                       <Download size={12} />
                       {formatCompact(h.downloads)}
@@ -158,13 +139,7 @@ export function ModsStep({ loaders, loaderName, mcVersion, value, onChange }: Pr
               );
             })}
           </ul>
-          {hits.length < total && (
-            <div className="mod-results-more">
-              <button className="btn btn-ghost btn-sm" onClick={more}>
-                {t.mods.more}
-              </button>
-            </div>
-          )}
+          <MoreButton search={search} />
         </div>
       )}
     </div>

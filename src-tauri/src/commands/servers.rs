@@ -1,10 +1,14 @@
 //! Servidores: lista, creación, arranque y parada, consola y ajustes.
 
+use std::time::Duration;
+
 use chrono::{DateTime, Local};
+use micra_core::net::playit;
 use micra_core::provision::{
-    check_port_free_among, list_servers as list_server_dirs, used_ports, NewServerRequest,
+    self, check_port_free_among, list_servers as list_server_dirs, used_ports, NewServerRequest,
     ProvisionStep, Provisioner,
 };
+use micra_core::secrets::SecretKey;
 use micra_core::server::config::{
     validate_resources, BackupPolicy, CpuConfig, MemoryConfig, NetworkPolicy, SchedulePolicy,
     SecurityPolicy, ServerConfig,
@@ -72,6 +76,38 @@ pub async fn create_server(
         let _ = app.emit("provision://progress", step);
     };
     provisioner.create(request, &on_step).await
+}
+
+/// Borra un servidor por completo (y sus copias si se pide). Tiene que
+/// estar apagado.
+#[tauri::command]
+pub async fn delete_server(
+    state: State<'_, Shared>,
+    id: String,
+    delete_backups: bool,
+) -> CmdResult<()> {
+    let dir = server_dir(&state, &id)?;
+    let _busy = state.begin_busy(&id)?;
+    state.ensure_stopped(&id).await?;
+    let cfg = ServerConfig::load(&dir).await?;
+    // Su túnel de playit.gg ya no hará falta; si no se puede borrar ahora,
+    // se queda en la cuenta sin estorbar.
+    if cfg.network.tunnel {
+        if let Ok(Some(secret)) = state.secrets.get(SecretKey::PlayitAgent).await {
+            let deleted = tokio::time::timeout(
+                Duration::from_secs(10),
+                playit::delete_tunnel(&state.http, &secret, &id),
+            )
+            .await;
+            if !matches!(deleted, Ok(Ok(()))) {
+                tracing::warn!("no se pudo borrar el túnel de playit.gg de {id}");
+            }
+        }
+    }
+    provision::delete_server(&state.paths, &id, delete_backups).await?;
+    state.running.write().await.remove(&id);
+    state.live.lock().unwrap().remove(&id);
+    Ok(())
 }
 
 #[tauri::command]

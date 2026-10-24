@@ -41,6 +41,10 @@
   --series-players: #9085e9;
   --series-tps: #199e70;
 
+  /* Webs de mods: solo el punto de su etiqueta, siempre junto al nombre */
+  --source-modrinth: #1bd96a;
+  --source-curseforge: #f16436;
+
   /* Tipografía */
   --font: "Inter Variable", "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
   --mono: "JetBrains Mono Variable", "JetBrains Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;

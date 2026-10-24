@@ -29,6 +29,8 @@ pub enum NotifyEvent {
     },
     ServerCrashed {
         server: String,
+        /// Mods que señala el error, separados por comas (vacío si ninguno).
+        mods: String,
     },
     IpBlocked {
         server: String,
@@ -128,7 +130,7 @@ impl NotifyEvent {
                 Fr => (format!("{server} est en ligne"), "Les joueurs peuvent se connecter.".into()),
                 De => (format!("{server} ist online"), "Spieler können jetzt beitreten.".into()),
             },
-            NotifyEvent::ServerCrashed { server } => match lang {
+            NotifyEvent::ServerCrashed { server, mods } if mods.is_empty() => match lang {
                 Es => (
                     format!("{server} se ha detenido por un error"),
                     "Revisa la consola para ver qué pasó.".into(),
@@ -148,6 +150,28 @@ impl NotifyEvent {
                 De => (
                     format!("{server} wurde wegen eines Fehlers beendet"),
                     "Sieh in der Konsole nach, was passiert ist.".into(),
+                ),
+            },
+            NotifyEvent::ServerCrashed { server, mods } => match lang {
+                Es => (
+                    format!("{server} se ha detenido por un error"),
+                    format!("Causa probable: {mods}. Abre Micra para arreglarlo."),
+                ),
+                En => (
+                    format!("{server} stopped because of an error"),
+                    format!("Likely cause: {mods}. Open Micra to fix it."),
+                ),
+                Pt => (
+                    format!("{server} parou por causa de um erro"),
+                    format!("Causa provável: {mods}. Abra o Micra para resolver."),
+                ),
+                Fr => (
+                    format!("{server} s'est arrêté à cause d'une erreur"),
+                    format!("Cause probable : {mods}. Ouvrez Micra pour corriger le problème."),
+                ),
+                De => (
+                    format!("{server} wurde wegen eines Fehlers beendet"),
+                    format!("Wahrscheinliche Ursache: {mods}. Öffne Micra, um es zu beheben."),
                 ),
             },
             NotifyEvent::IpBlocked {
@@ -380,7 +404,14 @@ mod tests {
                 player: "Steve".into(),
             },
             NotifyEvent::ServerReady { server: "S".into() },
-            NotifyEvent::ServerCrashed { server: "S".into() },
+            NotifyEvent::ServerCrashed {
+                server: "S".into(),
+                mods: String::new(),
+            },
+            NotifyEvent::ServerCrashed {
+                server: "S".into(),
+                mods: "Oculus, Zoomify".into(),
+            },
             NotifyEvent::IpBlocked {
                 server: "S".into(),
                 ip: "203.0.113.1".into(),

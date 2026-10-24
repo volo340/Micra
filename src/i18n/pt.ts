@@ -167,11 +167,13 @@ export const pt: Dict = {
     listError: "Não foi possível ler a lista de servidores",
     crashed: (name: string) => `“${name}” parou com um erro`,
     crashedHint: "Confira o console para ver o que aconteceu.",
+    crashedModsHint: "Veja o Painel: se foi por causa de algum mod, o Micra diz qual remover.",
     rejected: (player: string, server: string) => `${player} tentou entrar em “${server}”`,
     rejectedWhitelist: "Não está na lista de permissões. Você pode deixar entrar pelo painel.",
     rejectedBanned: "Está banido neste servidor.",
     created: "Servidor criado",
     createdMessage: (name: string) => `“${name}” já aparece na sua lista.`,
+    deleted: (name: string) => `“${name}” foi excluído`,
     openFolder: "Abrir a pasta do servidor",
     openMap: "Abrir o mapa web",
     restart: "Reiniciar",
@@ -202,6 +204,39 @@ export const pt: Dict = {
     packUpdate: (latest: string) => `Há uma versão nova do modpack: ${latest}.`,
     modUpdates: (n: number) => (n === 1 ? "Um mod tem uma versão nova." : `${n} mods têm uma versão nova.`),
     sandboxUnavailable: (reason: string) => `Não foi possível limitar as permissões do servidor: ${reason}`,
+  },
+
+  crash: {
+    titleStart: "O servidor não conseguiu iniciar",
+    titleStopped: "O servidor parou com um erro",
+    intro: "O Micra analisou o erro: remova estes mods e ligue o servidor de novo.",
+    introSuspected: "O Micra analisou o erro e estes mods aparecem nele: algum pode ser a causa.",
+    introExtra:
+      "O erro não diz qual mod o causou, mas estes só funcionam no jogo e sobram no servidor. Remova-os e tente de novo.",
+    introUnknown: "O Micra não encontrou qual mod causou o erro. Confira o console ou o relatório do erro.",
+    suspected: "Também aparecem no erro",
+    extra: "Sobram no servidor",
+    reasons: {
+      clientOnly: "Só funciona no jogo, não em um servidor",
+      missingDependency: (dep: string) => `Precisa de “${dep}”, que não está instalado`,
+      wrongVersion: (needs: string) => `É para outra versão (pede ${needs})`,
+      wrongLoader: (loader: string) => `É um mod de ${loader}: não funciona neste servidor`,
+      incompatible: (other: string) => `Não é compatível com “${other}”`,
+      duplicate: "Está instalado duas vezes",
+      failed: "Deu um erro ao carregar",
+      suspected: "Aparece no erro",
+    },
+    missing: (n: number, list: string) =>
+      n === 1
+        ? `Falta o mod “${list}”: você pode instalá-lo na aba Mods.`
+        : `Faltam estes mods: ${list}. Você pode instalá-los na aba Mods.`,
+    toMods: "Ir para Mods",
+    details: "Ver o erro",
+    openReport: "Abrir o relatório",
+    removeAndStart: (n: number) => (n === 1 ? "Remover o mod e ligar" : `Remover os ${n} mods e ligar`),
+    removing: "Removendo…",
+    fixedTitle: "Mods removidos",
+    fixed: (list: string) => `Você removeu ${list}. Já pode ligar o servidor de novo.`,
   },
 
   players: {
@@ -278,6 +313,15 @@ export const pt: Dict = {
     lastFailed: "O último backup automático falhou",
   },
 
+  search: {
+    failed: (e: string) => `Não foi possível buscar: ${e}`,
+    more: "Ver mais",
+    onlyModrinth:
+      "Só se busca no Modrinth: para buscar também no CurseForge é preciso uma chave de API (veja Configurações).",
+    sourceFailed: (source: string, e: string) =>
+      `Não foi possível buscar no ${source} (${e}): mostrando os demais resultados.`,
+  },
+
   mods: {
     stopToChange: "Desligue o servidor para instalar, remover ou atualizar mods.",
     packTitle: "Modpack",
@@ -308,6 +352,8 @@ export const pt: Dict = {
     emptyHint: "Procure abaixo os que quiser adicionar.",
     fromPack: "Do modpack",
     disabled: "Desativado",
+    clientOnly: "Só cliente",
+    clientOnlyHint: "Só funciona no jogo: em um servidor ele sobra e pode impedir que o servidor inicie.",
     updateTo: (v: string) => `Atualizar para ${v}`,
     enabledLabel: (name: string) => `${name} ativado`,
     enable: "Ativar",
@@ -318,15 +364,13 @@ export const pt: Dict = {
       "Faz parte do modpack: o servidor pode não iniciar sem ele. Se só quer testar, é melhor desativá-lo.",
     addTitle: "Adicionar mods",
     addHint: (loader: string, version: string) =>
-      `Só aparecem os mods do Modrinth que funcionam com ${loader} e Minecraft ${version} em um servidor.`,
-    searchPlaceholder: "Buscar no Modrinth: desempenho, mapas, tecnologia…",
-    searchFailed: (e: string) => `Não foi possível buscar: ${e}`,
+      `Só aparecem os mods do Modrinth e do CurseForge que funcionam com ${loader} e Minecraft ${version} em um servidor.`,
+    searchPlaceholder: "Buscar mods: desempenho, mapas, tecnologia…",
     noResults: "Nenhum resultado. Tente outras palavras.",
     install: "Instalar",
     installing: "Instalando…",
     installedTag: "Instalado",
     installedOk: (name: string) => `${name} instalado`,
-    more: "Ver mais",
     scanTitle: "Análise de malware",
     scanHint:
       "O Micra verifica os mods e plugins antes de cada inicialização e não liga o servidor se encontrar malware conhecido.",
@@ -449,6 +493,14 @@ export const pt: Dict = {
     attemptsInvalid: "Permita pelo menos 2 tentativas.",
     perIpInvalid: "Jogadores por IP deve estar entre 0 e 100.",
     mapPortInvalid: "A porta do mapa deve estar entre 1024 e 65535 e ser diferente da do jogo.",
+    danger: "Excluir o servidor",
+    dangerHint: "Exclui o mundo, os mods e as configurações dele. Não dá para desfazer.",
+    delete: "Excluir servidor",
+    deleting: "Excluindo…",
+    deleteTitle: (name: string) => `Excluir “${name}”?`,
+    deleteMessage: "O mundo, os mods e as configurações dele serão excluídos para sempre. Isso não pode ser desfeito.",
+    deleteBackups: (n: number) => (n === 1 ? "Excluir também o backup dele" : `Excluir também os ${n} backups dele`),
+    keepBackupsHint: "Se você desmarcar, os backups ficam na pasta de dados do Micra.",
   },
 
   properties: {
@@ -634,7 +686,6 @@ export const pt: Dict = {
       },
     },
     startHere: "Para começar",
-    curseforgeNeedsKey: "Para buscar no CurseForge é preciso uma chave de API (veja Configurações).",
     versionTitle: "Escolha a versão do Minecraft",
     versionHint: "Seus amigos terão que abrir o Minecraft nesta mesma versão para entrar.",
     versionsFailed: (e: string) => `Não foi possível carregar a lista de versões: ${e}`,
@@ -652,23 +703,21 @@ export const pt: Dict = {
       text: "Um pacote de mods pronto, que já vem com a sua versão do Minecraft.",
     },
     forgeHint: "A maioria dos mods recentes é feita para NeoForge; o Forge continua comum nas versões antigas.",
-    packSource: "Buscar modpacks no",
-    packOnly: (family: string) => `Só aparecem modpacks de ${family}.`,
+    packOnly: (family: string) => `Só aparecem modpacks de ${family}, do Modrinth e do CurseForge.`,
     loaderNote: (loader: string) =>
       `O Micra vai instalar a versão estável mais recente do ${loader} para esta versão do Minecraft.`,
     packVersionsFailed: (e: string) => `Não foi possível carregar as versões: ${e}`,
     packVersionsLoading: "Carregando versões…",
     packNoServer: (family: string) => `Este modpack não tem versão de servidor para ${family}.`,
     packVersion: "Versão do modpack",
-    packSearch: (source: string) => `Buscar no ${source}: aventura, tecnologia, magia…`,
-    searchFailed: (e: string) => `Não foi possível buscar: ${e}`,
+    packSearch: "Buscar modpacks: aventura, tecnologia, magia…",
     noResults: "Nenhum resultado",
     noResultsHint: "Tente outras palavras.",
     by: (author: string) => `de ${author}`,
     modsTitle: "Adicione mods (opcional)",
     modsHint: (loader: string, mc: string) =>
-      `Mods de ${loader} para o Minecraft ${mc}. O Micra os instala, com tudo de que precisam, ao criar o servidor; depois você pode adicionar ou remover outros na aba Mods.`,
-    modsSearch: "Buscar mods no Modrinth: desempenho, mapas, magia…",
+      `Mods de ${loader} para o Minecraft ${mc}, do Modrinth e do CurseForge. O Micra os instala, com tudo de que precisam, ao criar o servidor; depois você pode adicionar ou remover outros na aba Mods.`,
+    modsSearch: "Buscar mods: desempenho, mapas, magia…",
     modsChosen: (n: number) => (n === 1 ? "1 mod escolhido" : `${n} mods escolhidos`),
     modRemove: (name: string) => `Remover ${name}`,
     modAdd: "Adicionar",

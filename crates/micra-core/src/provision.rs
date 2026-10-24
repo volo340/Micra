@@ -476,12 +476,14 @@ pub async fn java_major_for(http: &reqwest::Client, mc_version: &str) -> u32 {
     }
 }
 
-/// Identificador libre para un servidor nuevo a partir de su nombre.
+/// Identificador libre para un servidor nuevo a partir de su nombre. Tampoco
+/// vale el de un servidor borrado cuyas copias se guardaron: el nuevo las
+/// heredaría.
 pub fn unique_id(paths: &AppPaths, name: &str) -> String {
     let base = slugify(name);
     let mut id = base.clone();
     let mut n = 2;
-    while paths.server_dir(&id).exists() {
+    while paths.server_dir(&id).exists() || paths.backups_dir(&id).exists() {
         id = format!("{base}-{n}");
         n += 1;
     }
@@ -519,6 +521,9 @@ pub fn used_ports(paths: &AppPaths, except: Option<&str>) -> Vec<(u16, String)> 
     };
     let mut out = Vec::new();
     for entry in entries.flatten() {
+        if entry.file_name().to_string_lossy().starts_with('.') {
+            continue;
+        }
         let Ok(raw) = std::fs::read(entry.path().join(crate::server::config::CONFIG_FILE)) else {
             continue;
         };
@@ -561,6 +566,10 @@ pub async fn list_servers(paths: &AppPaths) -> Result<Vec<(ServerConfig, PathBuf
         return Ok(out);
     };
     while let Some(entry) = entries.next_entry().await? {
+        // Las carpetas con punto no son servidores (p. ej. uno a medio borrar).
+        if entry.file_name().to_string_lossy().starts_with('.') {
+            continue;
+        }
         let dir = entry.path();
         if let Ok(cfg) = ServerConfig::load(&dir).await {
             out.push((cfg, dir));
@@ -570,9 +579,94 @@ pub async fn list_servers(paths: &AppPaths) -> Result<Vec<(ServerConfig, PathBuf
     Ok(out)
 }
 
+/// Prefijo de la carpeta de un servidor mientras se borra.
+const DELETING_PREFIX: &str = ".deleting-";
+
+/// Borra un servidor: su carpeta (mundo, mods y ajustes), sus estadísticas
+/// y, si se pide, sus copias de seguridad. No se puede deshacer.
+pub async fn delete_server(paths: &AppPaths, id: &str, with_backups: bool) -> Result<()> {
+    let trash = paths.servers().join(format!("{DELETING_PREFIX}{id}"));
+    remove_dir(&trash).await?;
+    // Primero se aparta (es instantáneo): aunque el borrado falle a medias,
+    // el servidor ya no sale en la lista.
+    tokio::fs::rename(paths.server_dir(id), &trash).await?;
+    remove_dir(&trash).await?;
+    remove_dir(&paths.stats_dir(id)).await?;
+    if with_backups {
+        remove_dir(&paths.backups_dir(id)).await?;
+    }
+    Ok(())
+}
+
+/// Lo que quedó de servidores que no se terminaron de borrar.
+pub async fn purge_deleted(paths: &AppPaths) {
+    let Ok(mut entries) = tokio::fs::read_dir(paths.servers()).await else {
+        return;
+    };
+    while let Ok(Some(entry)) = entries.next_entry().await {
+        if entry
+            .file_name()
+            .to_string_lossy()
+            .starts_with(DELETING_PREFIX)
+        {
+            if let Err(e) = tokio::fs::remove_dir_all(entry.path()).await {
+                tracing::warn!("no se pudo terminar de borrar {:?}: {e}", entry.file_name());
+            }
+        }
+    }
+}
+
+async fn remove_dir(dir: &Path) -> Result<()> {
+    match tokio::fs::remove_dir_all(dir).await {
+        Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e.into()),
+        _ => Ok(()),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn delete_a_server() {
+        let root = tempfile::tempdir().unwrap();
+        let paths = AppPaths::new(root.path());
+        for dir in [
+            paths.server_dir("survival").join("world"),
+            paths.server_dir("other"),
+            paths.backups_dir("survival"),
+            paths.stats_dir("survival"),
+            paths.backups_dir("other"),
+        ] {
+            std::fs::create_dir_all(dir).unwrap();
+        }
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        rt.block_on(async {
+            delete_server(&paths, "survival", false).await.unwrap();
+            assert!(!paths.server_dir("survival").exists());
+            assert!(!paths.stats_dir("survival").exists());
+            assert!(paths.backups_dir("survival").exists());
+            assert!(paths.server_dir("other").exists());
+            // Uno nuevo con el mismo nombre no se queda sus copias.
+            assert_eq!(unique_id(&paths, "Survival"), "survival-2");
+            std::fs::create_dir_all(paths.server_dir("survival")).unwrap();
+            delete_server(&paths, "survival", true).await.unwrap();
+            assert!(!paths.backups_dir("survival").exists());
+            assert!(paths.backups_dir("other").exists());
+            assert_eq!(unique_id(&paths, "Survival"), "survival");
+
+            // Un borrado que quedó a medias no aparece y se limpia al abrir.
+            let leftover = paths.servers().join(".deleting-old");
+            std::fs::create_dir_all(&leftover).unwrap();
+            std::fs::write(leftover.join("server.json"), "{}").unwrap();
+            assert!(list_servers(&paths).await.unwrap().is_empty());
+            purge_deleted(&paths).await;
+            assert!(!leftover.exists());
+        });
+    }
 
     #[test]
     fn ports_of_other_servers() {

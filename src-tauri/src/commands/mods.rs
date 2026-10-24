@@ -1,21 +1,32 @@
-//! Mods y modpack: lista, activar o quitar, instalar desde Modrinth,
-//! actualizaciones con un clic y análisis de malware.
+//! Mods y modpack: lista, activar o quitar, instalar desde Modrinth o
+//! CurseForge, actualizaciones con un clic, análisis de malware y qué mod
+//! quitar cuando el servidor no arranca.
 
 use std::sync::Arc;
 
-use micra_core::providers::modrinth::{ProjectKind, SearchQuery, SearchResponse};
+use micra_core::providers::curseforge::CurseForgeClient;
+use micra_core::providers::search::{self, ContentKind, ContentPage, ContentQuery, Cursor, Source};
 use micra_core::provision::{ProvisionStep, Provisioner};
 use micra_core::server::config::ServerConfig;
-use micra_core::server::mods::{self, ModInfo, ModRemoteInfo};
+use micra_core::server::mods::{self, ModInfo, ModRemoteInfo, Sources};
 use micra_core::server::pack::{self, PackManifest, PackUpdate, UpdateTarget};
 use micra_core::server::scan::{self, ScanReport};
 use micra_core::{tr, Error};
 use tauri::{AppHandle, Emitter, State};
 
-use super::CmdResult;
+use super::{open_path, CmdResult};
 use crate::events::{self, Task};
-use crate::state::Shared;
+use crate::state::{AppState, Shared};
 use crate::supervisor::{self, server_dir};
+
+/// Clientes para buscar y descargar mods (CurseForge solo si hay clave).
+fn sources<'a>(state: &'a AppState, curseforge: Option<&'a CurseForgeClient>) -> Sources<'a> {
+    Sources {
+        http: &state.http,
+        modrinth: &state.modrinth,
+        curseforge,
+    }
+}
 
 #[tauri::command]
 pub async fn list_mods(state: State<'_, Shared>, id: String) -> CmdResult<Vec<ModInfo>> {
@@ -36,10 +47,50 @@ pub async fn set_mod_enabled(
 }
 
 #[tauri::command]
-pub async fn remove_mod(state: State<'_, Shared>, id: String, file_name: String) -> CmdResult<()> {
+pub async fn remove_mod(
+    app: AppHandle,
+    state: State<'_, Shared>,
+    id: String,
+    file_name: String,
+) -> CmdResult<()> {
     let dir = server_dir(&state, &id)?;
     state.ensure_stopped(&id).await?;
-    mods::remove_mod(&dir, &file_name).await
+    mods::remove_mod(&dir, &file_name).await?;
+    // Si era uno de los que impedían arrancar, ya no hace falta avisar de él.
+    if state.live(&id).crash.is_some() {
+        let live = state.update_live(&id, |l| {
+            if let Some(crash) = l.crash.as_mut() {
+                crash.culprits.retain(|c| c.file_name != file_name);
+            }
+        });
+        events::live(&app, &id, &live);
+    }
+    Ok(())
+}
+
+/// Oculta el aviso de por qué falló el último arranque.
+#[tauri::command]
+pub fn dismiss_crash(app: AppHandle, state: State<'_, Shared>, id: String) -> CmdResult<()> {
+    let live = state.update_live(&id, |l| l.crash = None);
+    events::live(&app, &id, &live);
+    Ok(())
+}
+
+/// Abre el informe de error que dejó Minecraft en `crash-reports/`.
+#[tauri::command]
+pub fn open_crash_report(app: AppHandle, state: State<'_, Shared>, id: String) -> CmdResult<()> {
+    let dir = server_dir(&state, &id)?;
+    let file = state
+        .live(&id)
+        .crash
+        .and_then(|c| c.report_file)
+        .filter(|f| {
+            f.strip_prefix("crash-reports/").is_some_and(|name| {
+                !name.is_empty() && !name.contains(['/', '\\']) && !name.starts_with('.')
+            })
+        })
+        .ok_or_else(|| Error::NotFound(tr!("el informe del error", "the crash report")))?;
+    open_path(&app, &dir.join(file))
 }
 
 /// Qué mods tienen versión nueva (y actualiza el aviso del panel).
@@ -55,7 +106,8 @@ pub async fn check_mod_updates(
     let remote = if list.is_empty() {
         Vec::new()
     } else {
-        mods::check_updates(&state.modrinth, &cfg, &list).await?
+        let curseforge = state.curseforge().await;
+        mods::check_updates(sources(&state, curseforge.as_deref()), &dir, &cfg, &list).await?
     };
     let count = remote.iter().filter(|m| m.update.is_some()).count();
     let live = state.update_live(&id, |l| l.mod_updates = count);
@@ -68,56 +120,51 @@ pub async fn update_mod(
     state: State<'_, Shared>,
     id: String,
     file_name: String,
+    source: Source,
     version_id: String,
 ) -> CmdResult<String> {
     let dir = server_dir(&state, &id)?;
     let _busy = state.begin_busy(&id)?;
     state.ensure_stopped(&id).await?;
     let cfg = ServerConfig::load(&dir).await?;
-    mods::update_mod(
-        &state.http,
-        &state.modrinth,
-        &dir,
-        &cfg,
-        &file_name,
-        &version_id,
-    )
-    .await
+    let curseforge = state.curseforge().await;
+    let sources = sources(&state, curseforge.as_deref());
+    mods::update_mod(sources, &dir, &cfg, &file_name, source, &version_id).await
 }
 
-/// Busca mods en Modrinth que valgan para este servidor.
+/// Busca en Modrinth y CurseForge mods que valgan para este servidor.
 #[tauri::command]
 pub async fn search_mods(
     state: State<'_, Shared>,
     id: String,
     query: String,
-    offset: Option<u32>,
-) -> CmdResult<SearchResponse> {
+    cursor: Option<Cursor>,
+) -> CmdResult<ContentPage> {
     let dir = server_dir(&state, &id)?;
     let cfg = ServerConfig::load(&dir).await?;
-    let mut loaders = cfg.loader.modrinth_loaders(&cfg.mc_version).into_iter();
-    let Some(loader) = loaders.next() else {
+    let loaders = cfg.loader.modrinth_loaders(&cfg.mc_version);
+    if loaders.is_empty() {
         return Err(Error::InvalidConfig(tr!(
             "un servidor vanilla no puede cargar mods",
             "a vanilla server cannot load mods"
         )));
-    };
-    let query = SearchQuery {
+    }
+    let query = ContentQuery {
         query,
-        kind: ProjectKind::Mod,
+        kind: ContentKind::Mod,
         game_version: Some(cfg.mc_version.clone()),
-        loader: Some(loader.to_string()),
-        extra_loaders: loaders.map(str::to_string).collect(),
-        offset: offset.unwrap_or(0),
-        limit: 20,
+        loaders: loaders.into_iter().map(str::to_string).collect(),
+        cursor,
     };
-    state.modrinth.search(&query).await
+    let curseforge = state.curseforge().await;
+    search::search(&state.modrinth, curseforge.as_deref(), &query).await
 }
 
 #[tauri::command]
 pub async fn install_mod(
     state: State<'_, Shared>,
     id: String,
+    source: Source,
     project_id: String,
     version_id: Option<String>,
 ) -> CmdResult<Vec<String>> {
@@ -125,11 +172,13 @@ pub async fn install_mod(
     let _busy = state.begin_busy(&id)?;
     state.ensure_stopped(&id).await?;
     let cfg = ServerConfig::load(&dir).await?;
-    mods::install_from_modrinth(
-        &state.http,
-        &state.modrinth,
+    let curseforge = state.curseforge().await;
+    let sources = sources(&state, curseforge.as_deref());
+    mods::install(
+        sources,
         &dir,
         &cfg,
+        source,
         &project_id,
         version_id.as_deref(),
     )

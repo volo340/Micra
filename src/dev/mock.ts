@@ -9,6 +9,8 @@
 //   ?update=1         hay una versión nueva de Micra
 //   ?malware=1        el análisis de mods encuentra algo
 //   ?modfail=1        el asistente no consigue instalar el segundo mod elegido
+//   ?crash=1          «Aventura con mods» no arrancó: Micra señala qué mods quitar
+//   ?nocf=1           sin clave de CurseForge: solo se busca en Modrinth
 //
 // Una clave de CurseForge que empiece por cfc_pat_ se rechaza, como la «Profile API key».
 import { emit } from "@tauri-apps/api/event";
@@ -18,6 +20,10 @@ import type {
   AppSettings,
   BackupInfo,
   BackupScope,
+  ContentHit,
+  ContentPage,
+  ContentQuery,
+  CrashReport,
   ImportAnalysis,
   ImportRequest,
   Lang,
@@ -29,6 +35,8 @@ import type {
   PlayerLists,
   PropertiesView,
   ScanReport,
+  SearchCursor,
+  SearchSource,
   SecretKey,
   ServerConfig,
   ServerSettings,
@@ -108,6 +116,7 @@ const idleLive = (): LiveInfo => ({
   sandbox: null,
   mapNeedsAccept: false,
   lastBackupError: null,
+  crash: null,
 });
 
 const summary = (config: ServerConfig, live: Partial<LiveInfo> = {}): ServerSummary => ({
@@ -163,6 +172,51 @@ let servers: ServerSummary[] =
           },
         ),
       ];
+
+/** Lo que Micra lee del error de un servidor de Fabric que no arranca. */
+const CRASH: CrashReport = {
+  culprits: [
+    {
+      fileName: "iris-mc1.20.1-1.6.11.jar",
+      modId: "iris",
+      name: "Iris",
+      reason: { kind: "clientOnly" },
+      inLog: true,
+    },
+    {
+      fileName: "betterhud-fabric-1.2.0.jar",
+      modId: "betterhud",
+      name: "Better HUD",
+      reason: { kind: "missingDependency", dependency: "cloth-config" },
+      inLog: true,
+    },
+    {
+      fileName: "create-fabric-0.5.1-f-build.1417+mc1.20.1.jar",
+      modId: "create",
+      name: "Create",
+      reason: { kind: "suspected" },
+      inLog: true,
+    },
+    {
+      fileName: "sodium-fabric-mc1.20.1-0.5.3.jar",
+      modId: "sodium",
+      name: "Sodium",
+      reason: { kind: "clientOnly" },
+      inLog: false,
+    },
+  ],
+  missing: ["cloth-config"],
+  headline:
+    "java.lang.RuntimeException: Could not execute entrypoint stage 'main' due to errors, provided by 'betterhud' at 'dev.betterhud.Hud'!",
+  reportFile: "crash-reports/crash-2026-10-24_12.30.11-server.txt",
+  duringStart: true,
+};
+
+if (params.get("crash")) {
+  servers = servers.map((s) =>
+    s.config.id === "aventura-con-mods" ? { ...s, status: "crashed", live: { ...s.live, crash: CRASH } } : s,
+  );
+}
 
 const find = (id: string) => {
   const s = servers.find((x) => x.config.id === id);
@@ -276,6 +330,7 @@ async function start(id: string, fast = false) {
   const own: number[] = [];
   timers.set(id, own);
   setLive(id, {
+    crash: null,
     sandbox: config.security.sandbox
       ? platform === "windows"
         ? { kind: "jobObject", lowIntegrity: config.security.lowIntegrity }
@@ -560,7 +615,15 @@ const backupsOf = (id: string) => backups.get(id) ?? [];
 
 // ---------- Mods ----------
 
-function mod(fileName: string, name: string, version: string, modId: string, fromPack = true, enabled = true): ModInfo {
+function mod(
+  fileName: string,
+  name: string,
+  version: string,
+  modId: string,
+  fromPack = true,
+  enabled = true,
+  clientOnly = false,
+): ModInfo {
   return {
     fileName: enabled ? fileName : `${fileName}.disabled`,
     enabled,
@@ -570,6 +633,7 @@ function mod(fileName: string, name: string, version: string, modId: string, fro
     name,
     version,
     fromPack,
+    clientOnly,
   };
 }
 
@@ -585,11 +649,23 @@ const mods = new Map<string, ModInfo[]>([
       mod("balm-fabric-1.20.1-7.3.9.jar", "Balm", "7.3.9", "balm"),
       mod("jei-1.20.1-fabric-15.3.0.4.jar", "Just Enough Items", "15.3.0.4", "jei", true, false),
       mod("Chunky-1.3.146.jar", "Chunky", "1.3.146", "chunky", false),
+      ...(params.get("crash")
+        ? [
+            mod("iris-mc1.20.1-1.6.11.jar", "Iris", "1.6.11", "iris", true, true, true),
+            mod("sodium-fabric-mc1.20.1-0.5.3.jar", "Sodium", "0.5.3", "sodium"),
+            mod("betterhud-fabric-1.2.0.jar", "Better HUD", "1.2.0", "betterhud", false),
+          ]
+        : []),
     ],
   ],
 ]);
 
 const modsOf = (id: string) => mods.get(id) ?? [];
+
+/** Mods que Modrinth dice que solo funcionan en el juego (cliente). */
+const CLIENT_ONLY = new Set(["sodium", "iris"]);
+/** Mods instalados desde CurseForge: SHA-1 -> id del proyecto. */
+const fromCurseForge = new Map<string, string>([[fakeHash("Chunky-1.3.146.jar"), "396246"]]);
 
 /** Mods con versión nueva en Modrinth: id del mod -> [versión, archivo]. */
 const UPDATES: Record<string, [string, string]> = {
@@ -602,12 +678,15 @@ function remoteInfo(id: string): ModRemoteInfo[] {
     .filter((m) => m.modId)
     .map((m) => {
       const up = UPDATES[m.modId!];
+      const curseforge = fromCurseForge.get(m.sha1);
       return {
         sha1: m.sha1,
-        projectId: m.modId!,
+        source: curseforge ? "curseforge" : "modrinth",
+        projectId: curseforge ?? m.modId!,
         title: m.name,
         iconUrl: null,
         versionNumber: m.version ?? "?",
+        clientOnly: CLIENT_ONLY.has(m.modId!),
         update:
           up && up[0] !== m.version
             ? { versionId: `${m.modId}-${up[0]}`, versionNumber: up[0], fileName: up[1] }
@@ -687,29 +766,136 @@ const MOD_CATALOG: [string, string, string, string, number, string[]][] = [
   ["ledger", "Ledger", "PotatoPresident", "Server-side logging: who broke or placed each block.", 800_000, ["fabric"]],
 ];
 
+/** Los de CurseForge: id, nombre, autor, descripción, descargas y loaders. */
+const CF_MOD_CATALOG: [number, string, string, string, number, string[]][] = [
+  [238222, "Just Enough Items (JEI)", "mezz", "View items and recipes.", 310_000_000, ALL_LOADERS],
+  [
+    254284,
+    "Clumps",
+    "Jaredlll08",
+    "Groups XP orbs together into a single entity to reduce lag.",
+    180_000_000,
+    ALL_LOADERS,
+  ],
+  [
+    243121,
+    "Corail Tombstone",
+    "Corail31",
+    "Keeps your items in a grave when you die, with a few magic tricks.",
+    95_000_000,
+    ["forge", "neoforge"],
+  ],
+  [
+    228756,
+    "Torchmaster",
+    "xalcon",
+    "Mega torches that stop monsters from spawning around them.",
+    88_000_000,
+    ["forge", "neoforge"],
+  ],
+  [
+    223852,
+    "Storage Drawers",
+    "Texelsaur",
+    "Drawers that hold large amounts of a single item.",
+    76_000_000,
+    ALL_LOADERS,
+  ],
+  [314906, "FTB Chunks", "FTB", "Claim and force-load chunks, with a minimap.", 52_000_000, ALL_LOADERS],
+  [396246, "Chunky", "pop4959", "Pre-generates chunks, quickly and efficiently.", 7_000_000, ALL_LOADERS],
+  [404465, "Iron Chests", "ProgWML6", "Bigger chests made of iron, gold and diamond.", 48_000_000, ALL_LOADERS],
+];
+
 /** Loaders de Modrinth cuyos mods carga un servidor. */
 const modrinthLoadersOf = (loader: ServerConfig["loader"]) =>
   loader.kind === "neoForge" ? ["neoforge"] : loader.kind === "quilt" ? ["quilt", "fabric"] : [loader.kind];
 
-function modHits(query: string, loaders: string[], mcVersion: string, offset: number, limit: number) {
-  const q = query.toLowerCase();
-  const all = MOD_CATALOG.filter(
-    ([, title, , description, , own]) =>
-      own.some((l) => loaders.includes(l)) &&
-      (!q || title.toLowerCase().includes(q) || description.toLowerCase().includes(q)),
-  );
-  const hits = all.slice(offset, offset + limit).map(([pid, title, author, description, downloads, own]) => ({
-    project_id: pid,
-    slug: pid,
-    title,
-    author,
-    description,
-    downloads,
-    icon_url: null,
-    categories: own,
-    versions: [mcVersion],
-  }));
-  return { hits, total_hits: all.length, offset, limit };
+/** Como el núcleo: minúsculas, sin lo que va entre paréntesis y solo letras y números. */
+function dedupeKey(title: string) {
+  let depth = 0;
+  let out = "";
+  for (const c of title) {
+    if ("([{".includes(c)) depth++;
+    else if (")]}".includes(c)) depth = Math.max(0, depth - 1);
+    else if (depth === 0 && /[\p{L}\p{N}]/u.test(c)) out += c.toLowerCase();
+  }
+  return out || title.trim().toLowerCase();
+}
+
+const curseforgeOn = () => secrets.curseforgeApiKey || !params.get("nocf");
+
+const hit = (
+  source: SearchSource,
+  id: string,
+  title: string,
+  author: string,
+  description: string,
+  downloads: number,
+  gameVersion: string | null,
+): ContentHit => ({
+  source,
+  id,
+  title,
+  author,
+  description,
+  iconUrl: null,
+  downloads,
+  gameVersion,
+  dedupeKey: dedupeKey(title),
+});
+
+function sourceHits(source: SearchSource, q: ContentQuery): ContentHit[] {
+  const text = q.query.toLowerCase();
+  const matches = (title: string, description: string) =>
+    !text || title.toLowerCase().includes(text) || description.toLowerCase().includes(text);
+  const fits = (own: readonly string[]) => !q.loaders.length || own.some((l) => q.loaders.includes(l));
+  if (q.kind === "mod") {
+    return source === "modrinth"
+      ? MOD_CATALOG.filter(([, title, , desc, , own]) => fits(own) && matches(title, desc)).map(
+          ([pid, title, author, desc, downloads]) => hit(source, pid, title, author, desc, downloads, q.gameVersion),
+        )
+      : CF_MOD_CATALOG.filter(([, title, , desc, , own]) => fits(own) && matches(title, desc)).map(
+          ([cid, title, author, desc, downloads]) =>
+            hit(source, String(cid), title, author, desc, downloads, q.gameVersion),
+        );
+  }
+  return source === "modrinth"
+    ? PACKS.filter((p) => fits(packLoaders(p)) && matches(p[1], p[3])).map((p) =>
+        hit(source, p[0], p[1], p[2], p[3], p[4], p[5]),
+      )
+    : CF_PACKS.map((p, i) => [p, i] as const)
+        .filter(([p]) => fits([p[6]]) && matches(p[1], p[3]))
+        .map(([p, i]) => hit(source, String(CF_PACK_IDS + i), p[1], p[2], p[3], p[4], p[5]));
+}
+
+/** Como el buscador de Micra: una página de cada fuente, mezcladas y sin repetir proyectos. */
+function contentPage(q: ContentQuery): ContentPage {
+  const size = q.kind === "mod" ? 6 : 12;
+  const cursor: SearchCursor = q.cursor ?? { modrinth: 0, curseforge: 0 };
+  const enabled = curseforgeOn();
+  const page = (source: SearchSource, offset: number | null) => {
+    if (offset === null) return { hits: [] as ContentHit[], next: null };
+    const all = sourceHits(source, q);
+    const hits = all.slice(offset, offset + size);
+    const seen = offset + hits.length;
+    return { hits, next: hits.length && seen < all.length ? seen : null };
+  };
+  const m = page("modrinth", cursor.modrinth);
+  const c = page("curseforge", enabled ? cursor.curseforge : null);
+  const onModrinth = new Set(m.hits.map((h) => h.dedupeKey));
+  const rest = c.hits.filter((h) => !onModrinth.has(h.dedupeKey));
+  const hits: ContentHit[] = [];
+  for (let i = 0; i < Math.max(m.hits.length, rest.length); i++) {
+    if (m.hits[i]) hits.push(m.hits[i]);
+    if (rest[i]) hits.push(rest[i]);
+  }
+  const more = m.next !== null || c.next !== null;
+  return {
+    hits,
+    next: more ? { modrinth: m.next, curseforge: c.next } : null,
+    failed: [],
+    curseforgeEnabled: enabled,
+  };
 }
 
 // ---------- Propiedades ----------
@@ -894,7 +1080,10 @@ const LOADER_VERSIONS: Record<string, string[]> = {
 const javaFor = (mc: string) =>
   /^2\d\./.test(mc) ? 25 : versionAtLeast(mc, "1.20.5") ? 21 : versionAtLeast(mc, "1.18") ? 17 : 8;
 
-const PACKS = [
+/** id, nombre, autor, descripción, descargas, Minecraft y loader. */
+type Pack = readonly [string, string, string, string, number, string, string];
+
+const PACKS: Pack[] = [
   [
     "aventura-cosmica",
     "Aventura Cósmica",
@@ -949,7 +1138,39 @@ const PACKS = [
     "1.21.4",
     "fabric",
   ],
-] as const;
+];
+
+/** Los de CurseForge: su id es CF_PACK_IDS más su posición. */
+const CF_PACK_IDS = 2000;
+const CF_PACKS: Pack[] = [
+  [
+    "reino-de-piedra",
+    "Reino de Piedra",
+    "cantero",
+    "Levanta tu reino: castillos, ejércitos y comercio con otros jugadores.",
+    5_800_000,
+    "1.20.1",
+    "forge",
+  ],
+  [
+    "ingenieria-celestial",
+    "Ingeniería Celestial",
+    "orbita",
+    "Del taller a las estrellas: máquinas, cohetes y estaciones espaciales.",
+    2_900_000,
+    "1.21.1",
+    "neoforge",
+  ],
+  [
+    "islas-flotantes",
+    "Islas Flotantes",
+    "nube",
+    "Empieza en una isla en el cielo y consigue todo desde cero.",
+    1_700_000,
+    "1.21.1",
+    "fabric",
+  ],
+];
 
 /** Packs con versiones para varios loaders, como algunos de Modrinth: [versión, Minecraft, loader]. */
 const PACK_VERSIONS: Record<string, [string, string, string][]> = {
@@ -962,9 +1183,9 @@ const PACK_VERSIONS: Record<string, [string, string, string][]> = {
   ],
 };
 
-const packVersions = (p: (typeof PACKS)[number]): [string, string, string][] =>
+const packVersions = (p: Pack): [string, string, string][] =>
   PACK_VERSIONS[p[0]] ?? ["2.4.1", "2.4.0", "2.3.2"].map((v) => [v, p[5], p[6]]);
-const packLoaders = (p: (typeof PACKS)[number]) => [...new Set(packVersions(p).map(([, , l]) => l))];
+const packLoaders = (p: Pack) => [...new Set(packVersions(p).map(([, , l]) => l))];
 
 const slug = (name: string) =>
   name
@@ -1009,7 +1230,7 @@ async function provision(req: NewServerRequest): Promise<ServerConfig> {
     source.kind === "modrinth"
       ? PACKS.find((p) => source.versionId.startsWith(`${p[0]}-`))
       : source.kind === "curseForge"
-        ? PACKS[source.modId - 1000]
+        ? CF_PACKS[source.modId - CF_PACK_IDS]
         : undefined;
   // La versión elegida del pack dice su Minecraft y su loader.
   const chosen =
@@ -1113,9 +1334,10 @@ mockIPC(
       // La app
       case "app_info":
         return {
-          version: "0.2.3",
+          version: "0.3.0",
           dataDir: DATA_DIR,
-          curseforgeEnabled: secrets.curseforgeApiKey,
+          // Como la versión publicada, que trae su clave (salvo con ?nocf=1).
+          curseforgeEnabled: curseforgeOn(),
           language: settings.language ?? systemLang,
           platform,
         };
@@ -1151,7 +1373,7 @@ mockIPC(
         await sleep(600);
         return params.get("update")
           ? {
-              version: "0.2.4",
+              version: "0.3.1",
               notes: "Copias más rápidas y correcciones en el túnel.",
               date: new Date().toISOString(),
               canInstall: true,
@@ -1168,39 +1390,9 @@ mockIPC(
       case "loader_game_versions":
         await sleep(300);
         return LOADER_VERSIONS[a.loader as string] ?? [];
-      case "search_modrinth": {
+      case "search_content":
         await sleep(350);
-        const query = a.query as {
-          query: string;
-          kind: string;
-          gameVersion: string | null;
-          loader: string | null;
-          extraLoaders: string[];
-          offset: number;
-          limit: number;
-        };
-        const loaders = query.loader ? [query.loader, ...query.extraLoaders] : null;
-        if (query.kind === "mod") {
-          return modHits(query.query, loaders ?? ALL_LOADERS, query.gameVersion ?? "", query.offset, 6);
-        }
-        const q = query.query.toLowerCase();
-        const hits = PACKS.filter(
-          (p) =>
-            (!loaders || packLoaders(p).some((l) => loaders.includes(l))) &&
-            (!q || p[1].toLowerCase().includes(q) || p[3].toLowerCase().includes(q)),
-        ).map((p) => ({
-          project_id: p[0],
-          slug: p[0],
-          title: p[1],
-          author: p[2],
-          description: p[3],
-          downloads: p[4],
-          icon_url: null,
-          categories: packLoaders(p),
-          versions: [p[5]],
-        }));
-        return { hits, total_hits: hits.length, offset: 0, limit: 24 };
-      }
+        return contentPage(a.query as ContentQuery);
       case "modrinth_versions": {
         await sleep(300);
         const pack = PACKS.find((p) => p[0] === a.projectId);
@@ -1218,27 +1410,9 @@ mockIPC(
             date_published: "2026-09-01",
           }));
       }
-      case "search_curseforge": {
-        await sleep(350);
-        const q = String(a.query).toLowerCase();
-        const loaders = (a.loaders as string[] | null) ?? [];
-        return {
-          data: PACKS.map((p, i) => [p, i] as const)
-            .filter(([p]) => (!loaders.length || loaders.includes(p[6])) && (!q || p[1].toLowerCase().includes(q)))
-            .map(([[, name, , summary, downloadCount, version, loader], i]) => ({
-              id: 1000 + i,
-              name,
-              slug: slug(name),
-              summary,
-              downloadCount,
-              logo: null,
-              latestFiles: [{ gameVersions: [version, loaderName(loader)] }],
-            })),
-        };
-      }
       case "curseforge_files": {
         await sleep(300);
-        const pack = PACKS[Number(a.modId) - 1000];
+        const pack = CF_PACKS[Number(a.modId) - CF_PACK_IDS];
         return ["2.4.1", "2.4.0"].map((v, i) => ({
           id: 5000 + i,
           modId: a.modId,
@@ -1255,6 +1429,14 @@ mockIPC(
         return servers;
       case "create_server":
         return provision(a.request as NewServerRequest);
+      case "delete_server": {
+        await sleep(700);
+        const { status } = find(id);
+        if (status !== "stopped" && status !== "crashed") throw "Apaga el servidor antes de hacer esto";
+        servers = servers.filter((s) => s.config.id !== id);
+        if (a.deleteBackups) backups.delete(id);
+        return null;
+      }
       case "start_server":
         start(id);
         return null;
@@ -1329,11 +1511,19 @@ mockIPC(
         );
         return renamed;
       }
-      case "remove_mod":
+      case "remove_mod": {
         mods.set(
           id,
           modsOf(id).filter((m) => m.fileName !== a.fileName),
         );
+        // Si era uno de los que impedían arrancar, ya no se avisa de él.
+        const crash = find(id).live.crash;
+        if (crash)
+          setLive(id, { crash: { ...crash, culprits: crash.culprits.filter((c) => c.fileName !== a.fileName) } });
+        return null;
+      }
+      case "dismiss_crash":
+        setLive(id, { crash: null });
         return null;
       case "check_mod_updates": {
         await sleep(700);
@@ -1359,19 +1549,28 @@ mockIPC(
       case "search_mods": {
         await sleep(300);
         const { config } = find(id);
-        return modHits(String(a.query), modrinthLoadersOf(config.loader), config.mcVersion, Number(a.offset ?? 0), 6);
+        return contentPage({
+          query: String(a.query),
+          kind: "mod",
+          gameVersion: config.mcVersion,
+          loaders: modrinthLoadersOf(config.loader),
+          cursor: (a.cursor as SearchCursor | null) ?? null,
+        });
       }
       case "install_mod": {
         await sleep(1100);
-        const entry = MOD_CATALOG.find(([pid]) => pid === a.projectId);
+        const curseforge = a.source === "curseforge";
+        const entry = curseforge
+          ? CF_MOD_CATALOG.find(([cid]) => String(cid) === a.projectId)
+          : MOD_CATALOG.find(([pid]) => pid === a.projectId);
+        const name = entry?.[1] ?? String(a.projectId);
         if (params.get("modfail") && ++wizardInstalls === 2) {
-          throw `${entry?.[1] ?? a.projectId} no tiene ninguna versión para Minecraft ${find(id).config.mcVersion}`;
+          throw `${name} no tiene ninguna versión para Minecraft ${find(id).config.mcVersion}`;
         }
-        const file = `${a.projectId}-${modrinthLoadersOf(find(id).config.loader)[0]}-1.0.0.jar`;
-        mods.set(id, [
-          ...modsOf(id),
-          mod(file, entry?.[1] ?? String(a.projectId), "1.0.0", String(a.projectId), false),
-        ]);
+        const modId = curseforge ? slug(name) : String(a.projectId);
+        const file = `${modId}-${modrinthLoadersOf(find(id).config.loader)[0]}-1.0.0.jar`;
+        if (curseforge) fromCurseForge.set(fakeHash(file), String(a.projectId));
+        mods.set(id, [...modsOf(id), mod(file, name, "1.0.0", modId, false)]);
         return [file];
       }
       case "scan_mods": {

@@ -77,12 +77,13 @@ async fn players_until(events: &mut Receiver<ServerEvent>, marker: &str) -> (usi
     (joined, left)
 }
 
-async fn run_server(mc_version: &str, system_prefix: &str) {
+/// Carpeta, configuración y "java" falso que ejecuta `script`.
+fn fake_server(script: &str, mc_version: &str) -> (tempfile::TempDir, ServerConfig, JavaRuntime) {
     let dir = tempfile::tempdir().unwrap();
     let bin = dir.path().join("bin");
     std::fs::create_dir_all(&bin).unwrap();
     let java_bin = bin.join("java");
-    std::fs::write(&java_bin, FAKE_JAVA.replace("{sys}", system_prefix)).unwrap();
+    std::fs::write(&java_bin, script).unwrap();
     std::fs::set_permissions(&java_bin, std::fs::Permissions::from_mode(0o755)).unwrap();
 
     let java = JavaRuntime {
@@ -120,7 +121,43 @@ async fn run_server(mc_version: &str, system_prefix: &str) {
         pending_owner: None,
         world: WorldTweaks::default(),
     };
+    (dir, cfg, java)
+}
 
+/// Espera a que el proceso termine y devuelve cómo acabó.
+async fn final_status(server: &ServerHandle) -> ServerStatus {
+    let mut status = server.status_watch();
+    tokio::time::timeout(
+        Duration::from_secs(5),
+        status.wait_for(|s| matches!(s, ServerStatus::Stopped | ServerStatus::Crashed)),
+    )
+    .await
+    .expect("el proceso debería terminar")
+    .map(|s| *s)
+    .unwrap()
+}
+
+/// Forge sale sin código de error cuando no puede cargar los mods.
+#[tokio::test]
+async fn clean_exit_before_ready_is_a_crash() {
+    let script = "#!/bin/sh\necho \"[12:00:00] [main/ERROR]: Failed to start the minecraft server\"\nexit 0\n";
+    let (dir, cfg, java) = fake_server(script, "1.20.1");
+    let (server, _events) = ServerHandle::launch(&cfg, dir.path(), &java).await.unwrap();
+    assert_eq!(final_status(&server).await, ServerStatus::Crashed);
+}
+
+/// `stop` escrito en la consola mientras arranca no es un fallo.
+#[tokio::test]
+async fn console_stop_while_starting_is_a_stop() {
+    let script = "#!/bin/sh\necho \"[12:00:00] [main/INFO]: Loading mods\"\nread line\nexit 0\n";
+    let (dir, cfg, java) = fake_server(script, "1.20.1");
+    let (server, _events) = ServerHandle::launch(&cfg, dir.path(), &java).await.unwrap();
+    server.send_command("stop").await.unwrap();
+    assert_eq!(final_status(&server).await, ServerStatus::Stopped);
+}
+
+async fn run_server(mc_version: &str, system_prefix: &str) {
+    let (dir, cfg, java) = fake_server(&FAKE_JAVA.replace("{sys}", system_prefix), mc_version);
     let (server, mut events) = ServerHandle::launch(&cfg, dir.path(), &java).await.unwrap();
     tokio::time::timeout(Duration::from_secs(5), async {
         while server.status() != ServerStatus::Running {

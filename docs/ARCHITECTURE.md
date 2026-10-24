@@ -53,11 +53,13 @@ aislado en un crate sin Tauri (`micra-core`) que se prueba con `cargo test`.
 ┌───────────────┴──────────────── micra-core ──────────▼───────────────────┐
 │ provision   ─ orquesta el asistente: contenido → Java → loader → EULA    │
 │ import      ─ adopta un servidor que ya existe                           │
-│ providers   ─ mojang · modrinth (+ .mrpack) · curseforge · loaders       │
+│ providers   ─ mojang · modrinth (+ .mrpack) · curseforge · loaders ·     │
+│               search (las dos webs a la vez)                             │
 │ java        ─ runtimes Temurin aislados (API de Adoptium)                │
 │ server      ─ config · launcher · affinity · process · monitor · tps     │
 │               backup · schedule · players · properties · mods · pack     │
-│               stats · map (BlueMap) · ports · guard · sandbox · scan     │
+│               stats · map (BlueMap) · ports · guard · sandbox · scan ·   │
+│               diagnose (qué mod impide arrancar)                         │
 │ net         ─ UPnP · túnel de playit.gg · comprobación desde internet    │
 │ notify · secrets (llavero) · settings · i18n                             │
 │ download / archive ─ descargas HTTPS con hash, extracción segura         │
@@ -95,8 +97,8 @@ aislado en un crate sin Tauri (`micra-core`) que se prueba con `cargo test`.
    `online-mode`, lista blanca obligatoria, RCON y query apagados) y
    `micra.json`.
 7. Si en el asistente se eligieron mods sueltos, la interfaz los instala uno
-   a uno desde Modrinth (con sus dependencias) cuando el servidor ya existe;
-   el que falla se avisa al final y no deshace el servidor.
+   a uno desde Modrinth o CurseForge (con sus dependencias) cuando el servidor
+   ya existe; el que falla se avisa al final y no deshace el servidor.
 
 *Importar* sigue el mismo camino con una carpeta ya existente: la copia a la
 carpeta de servidores (la original no se toca), detecta versión, loader, mods
@@ -125,6 +127,22 @@ punto de estadísticas por minuto, bloquea IPs que fallan demasiados intentos,
 hace las copias automáticas y los reinicios programados, mantiene abierto el
 puerto (UPnP) o el túnel, y avisa en el escritorio o en Discord.
 
+### Cuando un servidor con mods no arranca
+
+El supervisor guarda las últimas 2000 líneas de la consola (si se perdió
+alguna, relee `logs/latest.log`). Si el servidor se cae, o no llega a abrirse
+(Forge termina con código 0 cuando un mod no carga, y eso también cuenta como
+fallo), `server/diagnose.rs` lee esas líneas y el informe que Minecraft deja
+en `crash-reports/` y señala qué mods quitar: los de cliente (por sus
+metadatos o porque el error carga clases del juego), los que necesitan otro
+mod que falta, los de otra versión o de otro loader, los repetidos, el que dio
+el error y, como sospechosos, los que aparecen en la traza. Cada uno se
+resuelve a su archivo de `mods/` por id, nombre, clase o configuración de
+mixins. Después pregunta a Modrinth, con los hashes, qué mods no funcionan en
+un servidor (`server_side: unsupported`) y los añade. El panel muestra la
+lista con un botón para quitarlos y volver a encender, y el aviso del
+escritorio o de Discord nombra los mods.
+
 ## 3. Estructura de carpetas
 
 ```
@@ -150,7 +168,8 @@ Micra/
 │  │  ├─ provision.rs            orquestación del asistente
 │  │  ├─ import.rs               importar un servidor existente
 │  │  ├─ java/                   JavaManager y API de Eclipse Temurin
-│  │  ├─ providers/              mojang, modrinth, mrpack, curseforge, loaders
+│  │  ├─ providers/              mojang, modrinth, mrpack, curseforge, loaders,
+│  │  │                          search (buscador de las dos webs)
 │  │  ├─ net/                    IP local, upnp.rs, playit.rs
 │  │  └─ server/
 │  │     ├─ config.rs            micra.json + validación
@@ -165,7 +184,8 @@ Micra/
 │  │     ├─ properties.rs        server.properties: lectura, validación, escritura
 │  │     ├─ gamerules.rs         reglas del juego según la versión
 │  │     ├─ world.rs             modo extremo y reglas guardadas en el mundo
-│  │     ├─ mods.rs, pack.rs     mods de Modrinth y actualización de modpacks
+│  │     ├─ mods.rs, pack.rs     mods de Modrinth y CurseForge, y actualización de modpacks
+│  │     ├─ diagnose.rs          qué mods quitar cuando el servidor no arranca
 │  │     ├─ map.rs               BlueMap
 │  │     ├─ ports.rs, version.rs
 │  │     ├─ guard.rs             bloqueo de IPs y límite por IP
@@ -200,7 +220,8 @@ Datos del usuario (fuera del repo):
 Linux:   ~/.local/share/micra/
 Windows: %APPDATA%\Micra\Micra\data\
   ├─ runtimes/java-8, java-17, java-21, …
-  ├─ servers/<id>/  (mundo, mods, micra.json, eula.txt, server.properties)
+  ├─ servers/<id>/  (mundo, mods, micra.json, eula.txt, server.properties;
+  │                  .micra/ guarda qué mods vinieron de CurseForge)
   ├─ backups/<id>/  (copias en ZIP)
   ├─ stats/<id>/    (un CSV por día)
   ├─ tools/         (agente de playit.gg)
@@ -224,6 +245,23 @@ Windows: %APPDATA%\Micra\Micra\data\
   distribuye públicamente, conviene un pequeño proxy propio para no incrustar
   la clave en el binario. Algunos autores bloquean la descarga por terceros:
   la app lo detecta y lo explica.
+- **Un solo buscador**: `providers/search.rs` pide cada página a Modrinth y a
+  CurseForge a la vez y las mezcla; si una de las dos no responde, se ven los
+  resultados de la otra. Un proyecto que está en las dos (mismo título, sin lo
+  que va entre paréntesis) sale una vez, el de Modrinth, porque sus archivos
+  llegan con SHA-512 y siempre se pueden descargar desde la app. Se pueden
+  mezclar mods de las dos fuentes en un servidor: antes de instalar, Micra
+  compara el id que declara cada jar (`fabric.mod.json`, `mods.toml`…) con los
+  que ya hay, así que un mismo mod nunca queda dos veces. CurseForge no busca
+  por hash, por eso Micra apunta en `.micra/curseforge-mods.json` el proyecto
+  y el archivo de cada mod que instala desde allí, y así sabe cuándo hay
+  versión nueva.
+- **Borrar un servidor**: primero se aparta su carpeta a
+  `servers/.deleting-<id>` (es instantáneo, y deja de salir en la lista) y
+  luego se borra; si se corta a medias, se termina al abrir Micra. Se borran
+  también sus estadísticas y, si la persona lo elige, sus copias. Un servidor
+  nuevo no usa el id de uno borrado cuyas copias se guardaron, para no
+  heredarlas.
 - **Seguro por defecto**: todo servidor nace con `online-mode` y lista blanca
   obligatoria; si la persona los quita, el panel lo avisa. RCON y query
   quedan apagados (Micra usa la consola); si se activa RCON, Micra le pone una

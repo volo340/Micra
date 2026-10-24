@@ -32,6 +32,7 @@ pizarra de las caras del bloque son las superficies. Todos están en
 | `--series-ram` | `#d55181` | Gráficas de memoria |
 | `--series-players` | `#9085e9` | Gráfica de jugadores |
 | `--series-tps` | `#199e70` | Gráfica de TPS |
+| `--source-modrinth`, `--source-curseforge` | `#1bd96a`, `#f16436` | Punto de la etiqueta que dice de qué web es un mod o un modpack |
 
 Micra solo tiene tema oscuro.
 
@@ -71,6 +72,9 @@ backend simulado (`src/dev/mock.ts`), sin Rust ni Tauri:
 - `?platform=windows`: los textos y opciones de Windows.
 - `?update=1`: hay una versión nueva de Micra.
 - `?malware=1`: el análisis de mods encuentra malware.
+- `?modfail=1`: el asistente no consigue instalar el segundo mod elegido.
+- `?crash=1`: «Aventura con mods» no arrancó y el panel dice qué mods quitar.
+- `?nocf=1`: sin clave de CurseForge, el buscador solo usa Modrinth.
 
 Se pueden combinar: `http://localhost:1420/?state=running&lang=de&update=1`.
 
