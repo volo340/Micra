@@ -822,6 +822,27 @@
   color: #ff8a8d;
 }
 
+/* De dónde viene un mod o un modpack: el punto lleva el color de la web. */
+.source-tag {
+  gap: 6px;
+}
+
+.source-tag::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--text-3);
+}
+
+.source-tag[data-source="modrinth"]::before {
+  background: var(--source-modrinth);
+}
+
+.source-tag[data-source="curseforge"]::before {
+  background: var(--source-curseforge);
+}
+
 /* ---------- Interruptores con texto y grupos de opciones ---------- */
 
 .switch-row {
@@ -915,6 +936,12 @@
   width: 18px;
   height: 18px;
   margin-top: 1px;
+}
+
+.check-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
 }
 
 /* ---------- Cabecera de tarjeta ---------- */

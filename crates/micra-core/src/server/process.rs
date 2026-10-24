@@ -156,12 +156,16 @@ impl ServerHandle {
                     let _ = r.await;
                 }
                 let code = exit.ok().and_then(|s| s.code());
-                let stopping = *status_tx.borrow() == ServerStatus::Stopping;
-                let final_status = if stopping || code == Some(0) {
-                    ServerStatus::Stopped
-                } else {
-                    ServerStatus::Crashed
-                };
+                let before = *status_tx.borrow();
+                let stopping = before == ServerStatus::Stopping;
+                // Forge termina sin código de error cuando no puede cargar los
+                // mods: salir antes de abrirse sin que nadie lo pida es un fallo.
+                let final_status =
+                    if stopping || (code == Some(0) && before != ServerStatus::Starting) {
+                        ServerStatus::Stopped
+                    } else {
+                        ServerStatus::Crashed
+                    };
                 players.lock().unwrap().clear();
                 status_tx.send_replace(final_status);
                 let _ = events.send(ServerEvent::Exited { code });
@@ -231,6 +235,14 @@ impl ServerHandle {
         let stdin = guard.as_mut().ok_or(Error::NotRunning)?;
         stdin.write_all(format!("{line}\n").as_bytes()).await?;
         stdin.flush().await?;
+        // `stop` escrito en la consola: se apaga porque se pidió.
+        if line.split_whitespace().next() == Some("stop") && self.status() != ServerStatus::Stopping
+        {
+            self.status_tx.send_replace(ServerStatus::Stopping);
+            let _ = self.events.send(ServerEvent::Status {
+                status: ServerStatus::Stopping,
+            });
+        }
         Ok(())
     }
 

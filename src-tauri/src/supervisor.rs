@@ -8,18 +8,19 @@
 //! sospechosas, hace las copias automáticas y los reinicios programados,
 //! abre el puerto o el túnel y avisa a la persona.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet, VecDeque};
 use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::sync::{Arc, Mutex as StdMutex};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 use chrono::{Local, Utc};
 use micra_core::net::upnp::{UpnpMapping, RENEW_EVERY};
 use micra_core::notify::{restart_warning, NotifyEvent};
 use micra_core::server::backup::{self, BackupKind};
 use micra_core::server::config::ServerConfig;
+use micra_core::server::diagnose::{self, CrashInput, CrashReport};
 use micra_core::server::guard::{Guard, GuardAction, GuardState};
 use micra_core::server::monitor::ProcessMonitor;
 use micra_core::server::pack::{self, PackManifest};
@@ -47,6 +48,10 @@ const UPDATES_EVERY: Duration = Duration::from_secs(6 * 3600);
 const TUNNEL_CHECK: Duration = Duration::from_secs(60);
 /// Cada cuánto se vuelve a preguntar a playit.gg por un túnel que ya funciona.
 const TUNNEL_REFRESH: Duration = Duration::from_secs(600);
+/// Líneas del final de la consola que se guardan para entender un fallo.
+const TAIL_LINES: usize = 2000;
+/// Lo que se espera a Modrinth para saber qué mods son solo de cliente.
+const CLIENT_ONLY_LOOKUP: Duration = Duration::from_secs(15);
 
 /// Carpeta de un servidor existente. Los ids de Micra son siempre slugs
 /// (`[a-z0-9-]`): se rechaza cualquier otra cosa (`..`, separadores, `C:`).
@@ -358,6 +363,10 @@ async fn supervise(
     let mut background: Vec<JoinHandle<()>> = Vec::new();
     let mut ready = false;
     let mut crashed = false;
+    // El final de la consola, para saber qué falló si se cae.
+    let mut tail: VecDeque<String> = VecDeque::with_capacity(TAIL_LINES);
+    let mut lagged = false;
+    let mut fatal_seen = false;
 
     let mut second = tokio::time::interval(Duration::from_secs(1));
     second.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -369,6 +378,7 @@ async fn supervise(
                     Ok(event) => event,
                     Err(RecvError::Lagged(skipped)) => {
                         tracing::warn!(skipped, "la consola va más rápido que la interfaz");
+                        lagged = true;
                         continue;
                     }
                     Err(RecvError::Closed) => break,
@@ -376,7 +386,12 @@ async fn supervise(
                 events::server_event(&app, &id, &event);
                 match &event {
                     ServerEvent::Log { line, .. } => {
+                        if tail.len() == TAIL_LINES {
+                            tail.pop_front();
+                        }
+                        tail.push_back(line.clone());
                         let msg = message_of(line);
+                        fatal_seen |= !ready && diagnose::stops_the_start(msg);
                         // Reglas cambiadas en la consola o por un operador en el juego.
                         if let Some((rule, value)) = gamerules::parse_set(msg) {
                             if let Some(property) = gamerules::property_of(&rule) {
@@ -477,14 +492,25 @@ async fn supervise(
     events::live(&app, &id, &live);
 
     let reason = *server.stop_reason.lock().unwrap();
-    if crashed && reason.is_none() {
-        notify(
-            &app,
-            &state,
-            NotifyEvent::ServerCrashed {
-                server: name.clone(),
-            },
-        );
+    let failed = crashed && reason.is_none();
+    // También si se quedó colgado tras el error y la persona lo paró.
+    if failed || (fatal_seen && !ready && reason == Some(StopReason::User)) {
+        let console = if lagged {
+            diagnose::log_tail(&dir, TAIL_LINES).await
+        } else {
+            Vec::from(tail)
+        };
+        let report = diagnose_crash(&app, &state, &server, console, !ready).await;
+        if failed {
+            notify(
+                &app,
+                &state,
+                NotifyEvent::ServerCrashed {
+                    server: name.clone(),
+                    mods: report.as_ref().map(culprit_names).unwrap_or_default(),
+                },
+            );
+        }
     }
     server.finished.send_replace(true);
 
@@ -500,6 +526,84 @@ async fn supervise(
             );
         }
     }
+}
+
+/// Lee por qué falló un servidor con mods y lo deja en el panel: primero lo
+/// que dice el error y después, si Modrinth responde, los mods que solo
+/// funcionan en el juego (cliente).
+async fn diagnose_crash(
+    app: &AppHandle,
+    state: &Shared,
+    server: &RunningServer,
+    console: Vec<String>,
+    during_start: bool,
+) -> Option<CrashReport> {
+    let id = {
+        let cfg = server.config.borrow();
+        if !cfg.loader.supports_mods() {
+            return None;
+        }
+        cfg.id.clone()
+    };
+    let dir = server.dir.clone();
+    let mods = mods::list_mods(&dir).await.ok()?;
+    // Margen por si el reloj de los archivos va por segundos.
+    let since = SystemTime::from(server.started_at) - Duration::from_secs(2);
+    let saved = diagnose::latest_report(&dir, since).await;
+    let mut report = {
+        let (mods, dir) = (mods.clone(), dir.clone());
+        tauri::async_runtime::spawn_blocking(move || {
+            diagnose::diagnose(&CrashInput {
+                console: &console,
+                report: saved
+                    .as_ref()
+                    .map(|(text, name)| (text.as_str(), name.as_str())),
+                mods: &mods,
+                server_dir: &dir,
+                during_start,
+            })
+        })
+        .await
+        .ok()?
+    };
+    diagnose::add_client_only(&mut report, &mods, &HashSet::new());
+    let live = state.update_live(&id, |l| l.crash = Some(report.clone()));
+    events::live(app, &id, &live);
+
+    let (app, state) = (app.clone(), state.clone());
+    tauri::async_runtime::spawn(async move {
+        let lookup = diagnose::client_only_on_modrinth(&state.modrinth, &mods);
+        let Ok(Ok(sha1s)) = tokio::time::timeout(CLIENT_ONLY_LOOKUP, lookup).await else {
+            return;
+        };
+        if sha1s.is_empty() {
+            return;
+        }
+        // Sin los mods que la persona ya quitó mientras tanto.
+        let present: Vec<_> = mods
+            .into_iter()
+            .filter(|m| dir.join(mods::MODS_DIR).join(&m.file_name).exists())
+            .collect();
+        let live = state.update_live(&id, |l| {
+            if let Some(crash) = l.crash.as_mut() {
+                diagnose::add_client_only(crash, &present, &sha1s);
+            }
+        });
+        events::live(&app, &id, &live);
+    });
+    Some(report)
+}
+
+/// Los mods que señala el error, para el aviso.
+fn culprit_names(report: &CrashReport) -> String {
+    report
+        .culprits
+        .iter()
+        .filter(|c| c.in_log)
+        .take(3)
+        .map(|c| c.name.clone().unwrap_or_else(|| c.file_name.clone()))
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 /// `start` lanza la vigilancia y la vigilancia vuelve a llamar a `start` al
@@ -770,9 +874,9 @@ fn spawn_updates(app: &AppHandle, state: &Shared, server: &Arc<RunningServer>) -
 }
 
 pub async fn check_updates(app: &AppHandle, state: &Shared, dir: &Path, cfg: &ServerConfig) {
+    let curseforge = state.curseforge().await;
     let pack_update = if cfg.source.is_some() {
         let manifest = PackManifest::load(dir).await;
-        let curseforge = state.curseforge().await;
         pack::check_update(
             &state.modrinth,
             curseforge.as_deref(),
@@ -791,7 +895,12 @@ pub async fn check_updates(app: &AppHandle, state: &Shared, dir: &Path, cfg: &Se
     if cfg.loader.supports_mods() {
         if let Ok(list) = mods::list_mods(dir).await {
             if !list.is_empty() {
-                match mods::check_updates(&state.modrinth, cfg, &list).await {
+                let sources = mods::Sources {
+                    http: &state.http,
+                    modrinth: &state.modrinth,
+                    curseforge: curseforge.as_deref(),
+                };
+                match mods::check_updates(sources, dir, cfg, &list).await {
                     Ok(remote) => {
                         mod_updates = remote.iter().filter(|m| m.update.is_some()).count()
                     }

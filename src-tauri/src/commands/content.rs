@@ -1,11 +1,11 @@
 //! Versiones de Minecraft (también las de cada loader) y búsqueda de mods y
-//! modpacks en Modrinth y CurseForge.
+//! modpacks en Modrinth y CurseForge a la vez.
 
-use micra_core::providers::curseforge::{CfClass, CfFile, CfSearchResponse};
+use micra_core::providers::curseforge::CfFile;
 use micra_core::providers::loaders::{self, ModLoader};
-use micra_core::providers::modrinth::{SearchQuery, SearchResponse, Version};
+use micra_core::providers::modrinth::Version;
 use micra_core::providers::mojang::{self, VersionEntry};
-use micra_core::{tr, Error};
+use micra_core::providers::search::{self, curseforge_missing, ContentPage, ContentQuery};
 use tauri::State;
 
 use super::CmdResult;
@@ -31,12 +31,14 @@ pub async fn loader_game_versions(
     loaders::game_versions(&state.http, loader).await
 }
 
+/// Mods o modpacks de Modrinth y CurseForge (si hay clave) mezclados.
 #[tauri::command]
-pub async fn search_modrinth(
+pub async fn search_content(
     state: State<'_, Shared>,
-    query: SearchQuery,
-) -> CmdResult<SearchResponse> {
-    state.modrinth.search(&query).await
+    query: ContentQuery,
+) -> CmdResult<ContentPage> {
+    let curseforge = state.curseforge().await;
+    search::search(&state.modrinth, curseforge.as_deref(), &query).await
 }
 
 /// Versiones de un proyecto; con `loaders`, solo las de alguno de ellos.
@@ -60,28 +62,6 @@ pub async fn curseforge_enabled(state: State<'_, Shared>) -> CmdResult<bool> {
 }
 
 #[tauri::command]
-pub async fn search_curseforge(
-    state: State<'_, Shared>,
-    query: String,
-    class: CfClass,
-    game_version: Option<String>,
-    loaders: Option<Vec<String>>,
-    index: Option<u32>,
-) -> CmdResult<CfSearchResponse> {
-    let cf = state.curseforge().await.ok_or_else(curseforge_missing)?;
-    let loaders: Vec<&str> = loaders.iter().flatten().map(String::as_str).collect();
-    cf.search(
-        &query,
-        class,
-        game_version.as_deref(),
-        &loaders,
-        index.unwrap_or(0),
-        20,
-    )
-    .await
-}
-
-#[tauri::command]
 pub async fn curseforge_files(
     state: State<'_, Shared>,
     mod_id: u64,
@@ -89,11 +69,4 @@ pub async fn curseforge_files(
 ) -> CmdResult<Vec<CfFile>> {
     let cf = state.curseforge().await.ok_or_else(curseforge_missing)?;
     cf.files(mod_id, game_version.as_deref()).await
-}
-
-fn curseforge_missing() -> Error {
-    Error::InvalidConfig(tr!(
-        "CurseForge necesita una clave de API: añádela en Ajustes",
-        "CurseForge needs an API key: add it in Settings"
-    ))
 }

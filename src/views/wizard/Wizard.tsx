@@ -5,7 +5,7 @@ import { useT } from "../../i18n";
 import { api, errorMessage, onProvisionStep } from "../../lib/api";
 import { loaderName } from "../../lib/format";
 import { validPlayerName } from "../../lib/serverSettings";
-import type { AppInfo, HardwareInfo, ImportAnalysis, ProvisionStep, ServerConfig } from "../../lib/types";
+import type { HardwareInfo, ImportAnalysis, ProvisionStep, ServerConfig } from "../../lib/types";
 import { useTask } from "../../lib/useTask";
 import { ContentStep } from "./ContentStep";
 import {
@@ -25,7 +25,6 @@ import {
   type ForgeLoader,
   type Kind,
   type PackChoice,
-  type PackSource,
 } from "./draft";
 import { ImportStep, importable } from "./ImportStep";
 import { ModsStep } from "./ModsStep";
@@ -39,14 +38,13 @@ type StepId = "type" | "content" | "mods" | "resources" | "confirm";
 
 interface Props {
   hardware: HardwareInfo | null;
-  appInfo: AppInfo | null;
   /** Puertos de los servidores que ya existen. */
   usedPorts: number[];
   onCancel: () => void;
   onCreated: (config: ServerConfig, start: boolean) => void;
 }
 
-export function Wizard({ hardware, appInfo, usedPorts, onCancel, onCreated }: Props) {
+export function Wizard({ hardware, usedPorts, onCancel, onCreated }: Props) {
   const t = useT();
   const [draft, setDraft] = useState<Draft>(() => newDraft(hardware, t.wizard.defaultName, freePort(usedPorts)));
   const [step, setStep] = useState(0);
@@ -108,9 +106,6 @@ export function Wizard({ hardware, appInfo, usedPorts, onCancel, onCreated }: Pr
     [],
   );
 
-  const choosePackSource = (packSource: PackSource) =>
-    setDraft((d) => (d.packSource === packSource ? d : { ...d, packSource, pack: null, name: defaultName(d, null) }));
-
   const choosePack = (pack: PackChoice | null) => setDraft((d) => ({ ...d, pack, name: defaultName(d, pack) }));
 
   const onAnalysis = (a: ImportAnalysis) =>
@@ -162,7 +157,7 @@ export function Wizard({ hardware, appInfo, usedPorts, onCancel, onCreated }: Pr
       for (const [index, mod] of mods.entries()) {
         setModProgress({ index, total: mods.length, title: mod.title });
         try {
-          await api.installMod(config.id, mod.projectId);
+          await api.installMod(config.id, mod.source, mod.projectId);
         } catch (e) {
           failed.push({ title: mod.title, error: errorMessage(e) });
         }
@@ -235,11 +230,9 @@ export function Wizard({ hardware, appInfo, usedPorts, onCancel, onCreated }: Pr
               ) : usesLoader(draft.kind) ? (
                 <ContentStep
                   draft={draft}
-                  curseforgeEnabled={Boolean(appInfo?.curseforgeEnabled)}
                   onContent={chooseContent}
                   onForgeLoader={chooseForgeLoader}
                   onVersion={onVersion}
-                  onPackSource={choosePackSource}
                   onPack={choosePack}
                 />
               ) : (

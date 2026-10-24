@@ -41,6 +41,7 @@ interface Props {
   onRestart: () => void;
   onCommand: (command: string) => void;
   onOpenAppSettings: () => void;
+  onDeleted: () => void;
   onError: (e: unknown) => void;
 }
 
@@ -99,6 +100,7 @@ export function ServerView(props: Props) {
           onError={onError}
           onSaved={data.refresh}
           onOpenAppSettings={props.onOpenAppSettings}
+          onDeleted={props.onDeleted}
         />
       );
       break;
@@ -109,6 +111,7 @@ export function ServerView(props: Props) {
           server={server}
           data={data}
           onTab={props.onTab}
+          onStart={props.onStart}
           onCommand={props.onCommand}
           onError={onError}
         />

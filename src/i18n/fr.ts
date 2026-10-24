@@ -171,11 +171,13 @@ export const fr: Dict = {
     listError: "Impossible de lire la liste des serveurs",
     crashed: (name: string) => `« ${name} » s’est arrêté sur une erreur`,
     crashedHint: "Consultez la console pour voir ce qui s’est passé.",
+    crashedModsHint: "Regardez le tableau de bord : si un mod en est la cause, Micra vous dit lequel retirer.",
     rejected: (player: string, server: string) => `${player} a essayé de rejoindre « ${server} »`,
     rejectedWhitelist: "Pas dans la liste blanche. Vous pouvez le laisser entrer depuis le tableau de bord.",
     rejectedBanned: "Banni de ce serveur.",
     created: "Serveur créé",
     createdMessage: (name: string) => `« ${name} » apparaît maintenant dans votre liste.`,
+    deleted: (name: string) => `« ${name} » a été supprimé`,
     openFolder: "Ouvrir le dossier du serveur",
     openMap: "Ouvrir la carte web",
     restart: "Redémarrer",
@@ -206,6 +208,39 @@ export const fr: Dict = {
     packUpdate: (latest: string) => `Une nouvelle version du modpack est disponible : ${latest}.`,
     modUpdates: (n: number) => (n === 1 ? "Un mod a une nouvelle version." : `${n} mods ont une nouvelle version.`),
     sandboxUnavailable: (reason: string) => `Impossible de limiter les droits du serveur : ${reason}`,
+  },
+
+  crash: {
+    titleStart: "Le serveur n’a pas pu démarrer",
+    titleStopped: "Le serveur s’est arrêté sur une erreur",
+    intro: "Micra a analysé l’erreur : retirez ces mods et redémarrez le serveur.",
+    introSuspected: "Micra a analysé l’erreur et ces mods y apparaissent : l’un d’eux peut en être la cause.",
+    introExtra:
+      "L’erreur ne dit pas quel mod en est la cause, mais ceux-ci ne fonctionnent que dans le jeu et ne servent à rien sur le serveur. Retirez-les et réessayez.",
+    introUnknown: "Micra n’a pas trouvé quel mod en est la cause. Consultez la console ou le rapport d’erreur.",
+    suspected: "Apparaissent aussi dans l’erreur",
+    extra: "Inutiles sur le serveur",
+    reasons: {
+      clientOnly: "Ne fonctionne que dans le jeu, pas sur un serveur",
+      missingDependency: (dep: string) => `A besoin de « ${dep} », qui n’est pas installé`,
+      wrongVersion: (needs: string) => `Prévu pour une autre version (demande ${needs})`,
+      wrongLoader: (loader: string) => `C’est un mod ${loader} : il ne fonctionne pas sur ce serveur`,
+      incompatible: (other: string) => `N’est pas compatible avec « ${other} »`,
+      duplicate: "Installé deux fois",
+      failed: "A provoqué une erreur au chargement",
+      suspected: "Apparaît dans l’erreur",
+    },
+    missing: (n: number, list: string) =>
+      n === 1
+        ? `Il manque le mod « ${list} » : vous pouvez l’installer depuis l’onglet Mods.`
+        : `Il manque ces mods : ${list}. Vous pouvez les installer depuis l’onglet Mods.`,
+    toMods: "Aller aux mods",
+    details: "Voir l’erreur",
+    openReport: "Ouvrir le rapport",
+    removeAndStart: (n: number) => (n === 1 ? "Retirer le mod et démarrer" : `Retirer les ${n} mods et démarrer`),
+    removing: "Retrait en cours…",
+    fixedTitle: "Mods retirés",
+    fixed: (list: string) => `Vous avez retiré ${list}. Vous pouvez redémarrer le serveur.`,
   },
 
   players: {
@@ -284,6 +319,15 @@ export const fr: Dict = {
     lastFailed: "La dernière sauvegarde automatique a échoué",
   },
 
+  search: {
+    failed: (e: string) => `Recherche impossible : ${e}`,
+    more: "Voir plus",
+    onlyModrinth:
+      "Seul Modrinth est interrogé : pour chercher aussi sur CurseForge, il faut une clé d’API (voir Paramètres).",
+    sourceFailed: (source: string, e: string) =>
+      `Recherche impossible sur ${source} (${e}) : les autres résultats sont affichés.`,
+  },
+
   mods: {
     stopToChange: "Arrêtez le serveur pour installer, retirer ou mettre à jour des mods.",
     packTitle: "Modpack",
@@ -314,6 +358,8 @@ export const fr: Dict = {
     emptyHint: "Cherchez ci-dessous ceux que vous voulez ajouter.",
     fromPack: "Du modpack",
     disabled: "Désactivé",
+    clientOnly: "Client uniquement",
+    clientOnlyHint: "Ne fonctionne que dans le jeu : inutile sur un serveur, il peut l’empêcher de démarrer.",
     updateTo: (v: string) => `Mettre à jour vers ${v}`,
     enabledLabel: (name: string) => `${name} activé`,
     enable: "Activer",
@@ -324,15 +370,13 @@ export const fr: Dict = {
       "Il fait partie du modpack : le serveur pourrait ne pas démarrer sans lui. Pour un simple essai, désactivez-le plutôt.",
     addTitle: "Ajouter des mods",
     addHint: (loader: string, version: string) =>
-      `Seuls les mods Modrinth compatibles avec ${loader} et Minecraft ${version} sur un serveur sont affichés.`,
-    searchPlaceholder: "Chercher sur Modrinth : performances, cartes, technologie…",
-    searchFailed: (e: string) => `Recherche impossible : ${e}`,
+      `Seuls les mods Modrinth et CurseForge compatibles avec ${loader} et Minecraft ${version} sur un serveur sont affichés.`,
+    searchPlaceholder: "Chercher des mods : performances, cartes, technologie…",
     noResults: "Aucun résultat. Essayez d’autres mots.",
     install: "Installer",
     installing: "Installation…",
     installedTag: "Installé",
     installedOk: (name: string) => `${name} installé`,
-    more: "Voir plus",
     scanTitle: "Analyse antimalware",
     scanHint:
       "Micra vérifie les mods et plugins avant chaque démarrage et ne démarre pas le serveur s’il trouve un malware connu.",
@@ -460,6 +504,14 @@ export const fr: Dict = {
     attemptsInvalid: "Autorisez au moins 2 tentatives.",
     perIpInvalid: "Joueurs par IP doit être compris entre 0 et 100.",
     mapPortInvalid: "Le port de la carte doit être compris entre 1024 et 65535 et différent de celui du jeu.",
+    danger: "Supprimer le serveur",
+    dangerHint: "Supprime son monde, ses mods et ses paramètres. C’est irréversible.",
+    delete: "Supprimer le serveur",
+    deleting: "Suppression…",
+    deleteTitle: (name: string) => `Supprimer « ${name} » ?`,
+    deleteMessage: "Son monde, ses mods et ses paramètres seront supprimés définitivement. C’est irréversible.",
+    deleteBackups: (n: number) => (n === 1 ? "Supprimer aussi sa sauvegarde" : `Supprimer aussi ses ${n} sauvegardes`),
+    keepBackupsHint: "Si vous la décochez, les sauvegardes restent dans le dossier de données de Micra.",
   },
 
   properties: {
@@ -648,7 +700,6 @@ export const fr: Dict = {
       },
     },
     startHere: "Pour commencer",
-    curseforgeNeedsKey: "Chercher sur CurseForge nécessite une clé d’API (voir Paramètres).",
     versionTitle: "Choisissez la version de Minecraft",
     versionHint: "Vos amis devront ouvrir Minecraft dans cette même version pour rejoindre.",
     versionsFailed: (e: string) => `Impossible de charger la liste des versions : ${e}`,
@@ -666,23 +717,21 @@ export const fr: Dict = {
       text: "Un ensemble de mods tout prêt, avec sa propre version de Minecraft.",
     },
     forgeHint: "La plupart des mods récents sont faits pour NeoForge ; Forge reste courant sur les anciennes versions.",
-    packSource: "Chercher des modpacks sur",
-    packOnly: (family: string) => `Seuls les modpacks ${family} sont affichés.`,
+    packOnly: (family: string) => `Seuls les modpacks ${family} de Modrinth et CurseForge sont affichés.`,
     loaderNote: (loader: string) =>
       `Micra installera la dernière version stable de ${loader} pour cette version de Minecraft.`,
     packVersionsFailed: (e: string) => `Impossible de charger les versions : ${e}`,
     packVersionsLoading: "Chargement des versions…",
     packNoServer: (family: string) => `Ce modpack n’a pas de version serveur pour ${family}.`,
     packVersion: "Version du modpack",
-    packSearch: (source: string) => `Chercher sur ${source} : aventure, technologie, magie…`,
-    searchFailed: (e: string) => `Recherche impossible : ${e}`,
+    packSearch: "Chercher des modpacks : aventure, technologie, magie…",
     noResults: "Aucun résultat",
     noResultsHint: "Essayez d’autres mots.",
     by: (author: string) => `par ${author}`,
     modsTitle: "Ajoutez des mods (facultatif)",
     modsHint: (loader: string, mc: string) =>
-      `Mods ${loader} pour Minecraft ${mc}. Micra les installe, avec tout ce dont ils ont besoin, en créant le serveur ; vous pourrez en ajouter ou en retirer d’autres dans l’onglet Mods.`,
-    modsSearch: "Chercher des mods sur Modrinth : performance, cartes, magie…",
+      `Mods ${loader} pour Minecraft ${mc}, de Modrinth et CurseForge. Micra les installe, avec tout ce dont ils ont besoin, en créant le serveur ; vous pourrez en ajouter ou en retirer d’autres dans l’onglet Mods.`,
+    modsSearch: "Chercher des mods : performance, cartes, magie…",
     modsChosen: (n: number) => (n === 1 ? "1 mod choisi" : `${n} mods choisis`),
     modRemove: (name: string) => `Retirer ${name}`,
     modAdd: "Ajouter",

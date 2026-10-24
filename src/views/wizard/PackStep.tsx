@@ -1,56 +1,28 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Check, Download, PackageSearch, RefreshCw, Search } from "lucide-react";
+import { MoreButton, SearchNotes, SourceTag } from "../../components/ContentSearch";
 import { useT, type Dict } from "../../i18n";
 import { api, errorMessage } from "../../lib/api";
 import { formatCompact, loaderName } from "../../lib/format";
-import type { CfFile } from "../../lib/types";
-import type { PackChoice, PackSource } from "./draft";
-
-interface PackResult {
-  id: string;
-  title: string;
-  author: string | null;
-  description: string;
-  iconUrl: string | null;
-  downloads: number;
-  gameVersion: string | null;
-}
+import type { CfFile, ContentHit, SearchCursor, SearchSource } from "../../lib/types";
+import { useContentSearch } from "../../lib/useContentSearch";
+import type { PackChoice } from "./draft";
 
 interface VersionOption {
   id: string;
   label: string;
 }
 
-async function search(source: PackSource, query: string, loaders: string[]): Promise<PackResult[]> {
-  if (source === "modrinth") {
-    const res = await api.searchModrinth(query, loaders);
-    return res.hits.map((h) => ({
-      id: h.project_id,
-      title: h.title,
-      author: h.author,
-      description: h.description,
-      iconUrl: h.icon_url,
-      downloads: h.downloads,
-      gameVersion: h.versions.at(-1) ?? null,
-    }));
-  }
-  const res = await api.searchCurseForge(query, loaders);
-  return res.data.map((m) => ({
-    id: String(m.id),
-    title: m.name,
-    author: null,
-    description: m.summary,
-    iconUrl: m.logo?.thumbnailUrl ?? null,
-    downloads: m.downloadCount,
-    gameVersion: m.latestFiles[0]?.gameVersions.find((v) => /^\d/.test(v)) ?? null,
-  }));
-}
-
 /** CurseForge mezcla loaders ("Forge", "NeoForge") con versiones del juego. */
 const LOADER_LABELS = ["forge", "neoforge", "fabric", "quilt"];
 const fileLoaders = (f: CfFile) => f.gameVersions.map((v) => v.toLowerCase()).filter((v) => LOADER_LABELS.includes(v));
 
-async function versionsOf(source: PackSource, projectId: string, loaders: string[], t: Dict): Promise<VersionOption[]> {
+async function versionsOf(
+  source: SearchSource,
+  projectId: string,
+  loaders: string[],
+  t: Dict,
+): Promise<VersionOption[]> {
   if (source === "modrinth") {
     const versions = await api.modrinthVersions(projectId, loaders);
     return versions.map((v) => ({
@@ -86,7 +58,6 @@ export function PackIcon({ url, title, size = 48 }: { url: string | null; title:
 }
 
 interface Props {
-  source: PackSource;
   /** Solo modpacks de estos loaders (nombres de Modrinth). */
   loaders: string[];
   /** Nombre del tipo de servidor para los textos ("Fabric", "Forge / NeoForge"). */
@@ -95,55 +66,47 @@ interface Props {
   onChange: (pack: PackChoice | null) => void;
 }
 
-/** Buscador de modpacks de Modrinth o CurseForge con la versión elegida arriba. */
-export function PackPicker({ source, loaders, family, value, onChange }: Props) {
+/** Buscador de modpacks de Modrinth y CurseForge con la versión elegida arriba. */
+export function PackPicker({ loaders, family, value, onChange }: Props) {
   const t = useT();
   const [query, setQuery] = useState("");
-  const [attempt, setAttempt] = useState(0);
-  const [results, setResults] = useState<PackResult[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
   const [versions, setVersions] = useState<VersionOption[] | null>(null);
   const [versionsError, setVersionsError] = useState<string | null>(null);
-  const request = useRef(0);
+  const versionsRequest = useRef(0);
   const loaderKey = loaders.join(",");
+  const fetchPage = useCallback(
+    (q: string, cursor: SearchCursor | null) =>
+      api.searchContent({ query: q, kind: "modpack", gameVersion: null, loaders: loaderKey.split(","), cursor }),
+    [loaderKey],
+  );
+  const search = useContentSearch(query, fetchPage);
+  const results = search.hits;
 
-  useEffect(() => {
-    const id = ++request.current;
-    setResults(null);
-    const timer = window.setTimeout(
-      () => {
-        setError(null);
-        search(source, query, loaderKey.split(","))
-          .then((r) => id === request.current && setResults(r))
-          .catch((e) => id === request.current && setError(errorMessage(e)));
-      },
-      query ? 350 : 0,
-    );
-    return () => window.clearTimeout(timer);
-  }, [source, query, attempt, loaderKey]);
-
-  const loadVersions = (projectId: string, keep: PackChoice) => {
+  const loadVersions = (keep: PackChoice) => {
+    // Si se elige otro pack antes de que lleguen, estas ya no valen.
+    const ticket = ++versionsRequest.current;
     setVersions(null);
     setVersionsError(null);
-    versionsOf(source, projectId, loaders, t)
+    versionsOf(keep.source, keep.projectId, loaders, t)
       .then((list) => {
+        if (ticket !== versionsRequest.current) return;
         setVersions(list);
         // Al volver al paso se mantiene la versión que ya estaba elegida.
         const chosen = list.find((v) => v.id === keep.versionId) ?? list[0];
         onChange({ ...keep, versionId: chosen?.id ?? null, versionLabel: chosen?.label ?? null });
       })
-      .catch((e) => setVersionsError(errorMessage(e)));
+      .catch((e) => ticket === versionsRequest.current && setVersionsError(errorMessage(e)));
   };
 
   // Al volver a este paso con un pack ya elegido, recargar sus versiones.
   useEffect(() => {
-    if (value && value.source === source) loadVersions(value.projectId, value);
+    if (value) loadVersions(value);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const select = (r: PackResult) => {
+  const select = (r: ContentHit) => {
     const choice: PackChoice = {
-      source,
+      source: r.source,
       projectId: r.id,
       title: r.title,
       iconUrl: r.iconUrl,
@@ -151,10 +114,8 @@ export function PackPicker({ source, loaders, family, value, onChange }: Props) 
       versionLabel: null,
     };
     onChange(choice);
-    loadVersions(r.id, choice);
+    loadVersions(choice);
   };
-
-  const sourceName = source === "modrinth" ? "Modrinth" : "CurseForge";
 
   return (
     <>
@@ -197,17 +158,19 @@ export function PackPicker({ source, loaders, family, value, onChange }: Props) 
             className="input"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder={t.wizard.packSearch(sourceName)}
-            aria-label={t.wizard.packSearch(sourceName)}
+            placeholder={t.wizard.packSearch}
+            aria-label={t.wizard.packSearch}
           />
         </div>
         <span className="field-hint">{t.wizard.packOnly(family)}</span>
       </div>
 
-      {error ? (
+      <SearchNotes search={search} />
+
+      {search.error && results === null ? (
         <div className="notice" data-tone="error">
-          <span>{t.wizard.searchFailed(error)}</span>
-          <button className="btn btn-secondary btn-sm" onClick={() => setAttempt((n) => n + 1)}>
+          <span>{t.search.failed(search.error)}</span>
+          <button className="btn btn-secondary btn-sm" onClick={search.retry}>
             <RefreshCw size={14} /> {t.common.retry}
           </button>
         </div>
@@ -228,10 +191,10 @@ export function PackPicker({ source, loaders, family, value, onChange }: Props) 
       ) : (
         <div className="pack-grid">
           {results.map((r) => {
-            const selected = value?.projectId === r.id;
+            const selected = value?.source === r.source && value.projectId === r.id;
             return (
               <button
-                key={r.id}
+                key={`${r.source}:${r.id}`}
                 type="button"
                 className="pack-card"
                 data-selected={selected || undefined}
@@ -243,6 +206,7 @@ export function PackPicker({ source, loaders, family, value, onChange }: Props) 
                   {r.author && <span className="pack-author">{t.wizard.by(r.author)}</span>}
                   <span className="pack-desc">{r.description}</span>
                   <span className="pack-meta">
+                    <SourceTag source={r.source} />
                     <span>
                       <Download size={12} />
                       {formatCompact(r.downloads)}
@@ -260,6 +224,7 @@ export function PackPicker({ source, loaders, family, value, onChange }: Props) 
           })}
         </div>
       )}
+      {results && results.length > 0 && <MoreButton search={search} />}
     </>
   );
 }

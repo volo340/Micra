@@ -29,6 +29,13 @@ export interface Notice {
   message?: string;
 }
 
+/** Una copia sin la entrada de este servidor. */
+function without<T>(record: Record<string, T>, id: string): Record<string, T> {
+  const next = { ...record };
+  delete next[id];
+  return next;
+}
+
 /** Estado global: servidores, consola, estadísticas en vivo y avisos. */
 export function useAppData(notify: (notice: Notice) => void) {
   const t = useT();
@@ -150,10 +157,14 @@ export function useAppData(notify: (notice: Notice) => void) {
               refresh();
             }
             if (event.status === "crashed") {
+              const modded = serversRef.current?.find((s) => s.config.id === serverId)?.config.loader.kind;
               notifyRef.current({
                 tone: "error",
                 title: tRef.current.server.crashed(nameOf(serverId)),
-                message: tRef.current.server.crashedHint,
+                message:
+                  modded && modded !== "vanilla"
+                    ? tRef.current.server.crashedModsHint
+                    : tRef.current.server.crashedHint,
               });
             }
             break;
@@ -222,6 +233,15 @@ export function useAppData(notify: (notice: Notice) => void) {
 
   const resetStats = useCallback((id: string) => setStats((prev) => ({ ...prev, [id]: [] })), []);
 
+  // Un servidor nuevo puede reutilizar el id de uno borrado: no hereda nada suyo.
+  const forget = useCallback((id: string) => {
+    setServers((prev) => prev?.filter((s) => s.config.id !== id) ?? prev);
+    setLogs((prev) => without(prev, id));
+    setStats((prev) => without(prev, id));
+    setTps((prev) => without(prev, id));
+    setRejections((prev) => without(prev, id));
+  }, []);
+
   const dismissRejection = useCallback(
     (id: string, name: string) =>
       setRejections((prev) => ({ ...prev, [id]: (prev[id] ?? []).filter((r) => r.name !== name) })),
@@ -243,6 +263,7 @@ export function useAppData(notify: (notice: Notice) => void) {
     echoCommand,
     clearLogs,
     resetStats,
+    forget,
     dismissRejection,
   };
 }

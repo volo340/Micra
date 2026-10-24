@@ -1,5 +1,15 @@
 import { useCallback, useEffect, useState } from "react";
-import { CalendarClock, ExternalLink, Globe2, Map as MapIcon, MemoryStick, ShieldCheck, Undo2 } from "lucide-react";
+import {
+  CalendarClock,
+  ExternalLink,
+  Globe2,
+  Map as MapIcon,
+  MemoryStick,
+  ShieldCheck,
+  Trash2,
+  Undo2,
+} from "lucide-react";
+import { useConfirm } from "../../components/Dialog";
 import { CoresField, MemoryField, PortField, validPort } from "../../components/ResourceFields";
 import { useToast } from "../../components/Toasts";
 import { Banner, CardTitle, SwitchRow } from "../../components/ui";
@@ -25,11 +35,12 @@ interface Props {
   onError: (e: unknown) => void;
   onSaved: () => void;
   onOpenAppSettings: () => void;
+  onDeleted: () => void;
 }
 
-/** Pestaña Ajustes del servidor: recursos, red, reinicios, seguridad, mapa y server.properties. */
+/** Pestaña Ajustes del servidor: recursos, red, reinicios, seguridad, mapa, server.properties y borrarlo. */
 export function ServerSettingsTab(props: Props) {
-  const { server, hardware, network, onError, onSaved, onOpenAppSettings } = props;
+  const { server, hardware, network, onError, onSaved, onOpenAppSettings, onDeleted } = props;
   const t = useT();
   const toast = useToast();
   const { config, status, live } = server;
@@ -45,6 +56,8 @@ export function ServerSettingsTab(props: Props) {
   const [publicIp, setPublicIp] = useState<string | null>(null);
   const [mapAccept, setMapAccept] = useState(false);
   const [mapWorking, setMapWorking] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [dialog, confirm] = useConfirm();
 
   useEffect(() => setDraft(JSON.parse(savedKey)), [savedKey]);
 
@@ -140,8 +153,41 @@ export function ServerSettingsTab(props: Props) {
   const rconOn = properties?.values["enable-rcon"] === "true";
   const lan = network?.localIp;
 
+  const deleteServer = async () => {
+    const backups = await api
+      .listBackups(id)
+      .then((list) => list.length)
+      .catch(() => 0);
+    let withBackups = true;
+    const ok = await confirm({
+      title: t.serverSettings.deleteTitle(config.name),
+      message: t.serverSettings.deleteMessage,
+      confirmLabel: t.serverSettings.delete,
+      danger: true,
+      check:
+        backups > 0
+          ? {
+              label: t.serverSettings.deleteBackups(backups),
+              hint: t.serverSettings.keepBackupsHint,
+              defaultChecked: true,
+              onChange: (checked) => (withBackups = checked),
+            }
+          : undefined,
+    });
+    if (ok === null) return;
+    setDeleting(true);
+    try {
+      await api.deleteServer(id, withBackups);
+      onDeleted();
+    } catch (e) {
+      onError(e);
+      setDeleting(false);
+    }
+  };
+
   return (
     <div className="tab-body settings-tab">
+      {dialog}
       <div className="settings-grid">
         <div className="settings-col">
           <section className="card card-pad settings-card">
@@ -435,6 +481,26 @@ export function ServerSettingsTab(props: Props) {
       {properties && (
         <PropertiesEditor serverId={id} view={properties} running={running} onSaved={setProperties} onError={onError} />
       )}
+
+      <section className="card card-pad settings-card danger-card">
+        <CardTitle
+          icon={<Trash2 size={17} />}
+          title={t.serverSettings.danger}
+          hint={t.serverSettings.dangerHint}
+          aside={
+            <button
+              className="btn btn-danger btn-sm"
+              onClick={deleteServer}
+              disabled={!stopped || server.busy || deleting}
+              title={stopped ? undefined : t.common.stopFirst}
+            >
+              <Trash2 size={14} />
+              {deleting ? t.serverSettings.deleting : t.serverSettings.delete}
+            </button>
+          }
+        />
+        {!stopped && <span className="subtle">{t.common.stopFirst}</span>}
+      </section>
 
       {(dirty || saving) && (
         <div className="save-bar" role="region" aria-label={t.common.unsaved}>

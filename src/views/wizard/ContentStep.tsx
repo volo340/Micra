@@ -2,26 +2,16 @@ import { Check, Info, Package, Puzzle } from "lucide-react";
 import { Segmented } from "../../components/ui";
 import { useT } from "../../i18n";
 import { loaderName } from "../../lib/format";
-import {
-  modLoader,
-  modrinthLoaders,
-  type ContentMode,
-  type Draft,
-  type ForgeLoader,
-  type PackChoice,
-  type PackSource,
-} from "./draft";
+import { modLoader, modrinthLoaders, type ContentMode, type Draft, type ForgeLoader, type PackChoice } from "./draft";
 import { PackPicker } from "./PackStep";
 import { VersionPicker } from "./VersionStep";
 
 interface Props {
   draft: Draft;
-  curseforgeEnabled: boolean;
   onContent: (content: ContentMode) => void;
   onForgeLoader: (loader: ForgeLoader) => void;
   /** Debe ser estable: la lista de versiones lo llama al cargar. */
   onVersion: (mcVersion: string) => void;
-  onPackSource: (source: PackSource) => void;
   onPack: (pack: PackChoice | null) => void;
 }
 
@@ -31,15 +21,7 @@ const MODES: { mode: ContentMode; icon: typeof Puzzle }[] = [
 ];
 
 /** Fabric o Forge/NeoForge: versión y mods sueltos, o un modpack de ese loader. */
-export function ContentStep({
-  draft,
-  curseforgeEnabled,
-  onContent,
-  onForgeLoader,
-  onVersion,
-  onPackSource,
-  onPack,
-}: Props) {
+export function ContentStep({ draft, onContent, onForgeLoader, onVersion, onPack }: Props) {
   const t = useT();
   const family = t.wizard.kinds[draft.kind].title;
   const loader = modLoader(draft);
@@ -104,29 +86,7 @@ export function ContentStep({
           )}
         </>
       ) : (
-        <>
-          <div className="field">
-            <span className="field-label">{t.wizard.packSource}</span>
-            <Segmented
-              value={draft.packSource}
-              options={[
-                { value: "modrinth", label: "Modrinth" },
-                { value: "curseforge", label: "CurseForge", disabled: !curseforgeEnabled },
-              ]}
-              onChange={onPackSource}
-              label={t.wizard.packSource}
-            />
-            {!curseforgeEnabled && <span className="field-hint">{t.wizard.curseforgeNeedsKey}</span>}
-          </div>
-          <PackPicker
-            key={draft.packSource}
-            source={draft.packSource}
-            loaders={modrinthLoaders(draft)}
-            family={family}
-            value={draft.pack}
-            onChange={onPack}
-          />
-        </>
+        <PackPicker loaders={modrinthLoaders(draft)} family={family} value={draft.pack} onChange={onPack} />
       )}
     </div>
   );

@@ -122,6 +122,37 @@ export interface PackUpdate {
   target: UpdateTarget;
 }
 
+/** Por qué un mod impide arrancar (o no hace falta en el servidor). */
+export type CulpritReason =
+  | { kind: "clientOnly" }
+  | { kind: "missingDependency"; dependency: string }
+  | { kind: "wrongVersion"; needs: string }
+  | { kind: "wrongLoader"; loader: string }
+  | { kind: "incompatible"; other: string }
+  | { kind: "duplicate" }
+  | { kind: "failed" }
+  | { kind: "suspected" };
+
+export interface Culprit {
+  /** Archivo en `mods/` (lo que se quita). */
+  fileName: string;
+  modId: string | null;
+  name: string | null;
+  reason: CulpritReason;
+  /** Lo señala el error; si no, es un mod que no hace falta en el servidor. */
+  inLog: boolean;
+}
+
+/** Por qué falló el último arranque de un servidor con mods. */
+export interface CrashReport {
+  culprits: Culprit[];
+  /** Mods que piden otros y no están instalados. */
+  missing: string[];
+  headline: string | null;
+  reportFile: string | null;
+  duringStart: boolean;
+}
+
 /** Lo que el panel muestra de cada servidor además de su estado. */
 export interface LiveInfo {
   tps: number | null;
@@ -133,6 +164,7 @@ export interface LiveInfo {
   sandbox: SandboxStatus | null;
   mapNeedsAccept: boolean;
   lastBackupError: string | null;
+  crash: CrashReport | null;
 }
 
 export interface ServerSummary {
@@ -418,9 +450,12 @@ export interface ModInfo {
   name: string | null;
   version: string | null;
   fromPack: boolean;
+  /** Sus metadatos dicen que solo funciona en el juego (cliente). */
+  clientOnly: boolean;
 }
 
 export interface ModUpdate {
+  /** Versión de Modrinth o archivo de CurseForge. */
   versionId: string;
   versionNumber: string;
   fileName: string;
@@ -428,10 +463,13 @@ export interface ModUpdate {
 
 export interface ModRemoteInfo {
   sha1: string;
+  source: SearchSource;
   projectId: string;
   title: string | null;
   iconUrl: string | null;
   versionNumber: string;
+  /** Su fuente dice que solo funciona en el juego (cliente). */
+  clientOnly: boolean;
   update: ModUpdate | null;
 }
 
@@ -492,26 +530,48 @@ export interface ClaimProgress {
   linked: boolean;
 }
 
-// ---------- Modrinth (la API usa snake_case) ----------
+// ---------- Buscador de Modrinth y CurseForge ----------
 
-export interface ModrinthHit {
-  project_id: string;
-  slug: string;
+export type SearchSource = "modrinth" | "curseforge";
+export type ContentKind = "mod" | "modpack";
+
+/** Por dónde sigue cada fuente; `null` si ya no le quedan resultados. */
+export interface SearchCursor {
+  modrinth: number | null;
+  curseforge: number | null;
+}
+
+export interface ContentQuery {
+  query: string;
+  kind: ContentKind;
+  gameVersion: string | null;
+  loaders: string[];
+  /** `null`: la primera página. */
+  cursor: SearchCursor | null;
+}
+
+export interface ContentHit {
+  source: SearchSource;
+  /** Id del proyecto en su fuente (en CurseForge, el número como texto). */
+  id: string;
   title: string;
+  author: string | null;
   description: string;
-  author: string;
+  iconUrl: string | null;
   downloads: number;
-  icon_url: string | null;
-  categories: string[];
-  versions: string[];
+  gameVersion: string | null;
+  /** El mismo proyecto en las dos fuentes comparte este valor. */
+  dedupeKey: string;
 }
 
-export interface ModrinthSearchResponse {
-  hits: ModrinthHit[];
-  total_hits: number;
-  offset: number;
-  limit: number;
+export interface ContentPage {
+  hits: ContentHit[];
+  next: SearchCursor | null;
+  failed: { source: SearchSource; error: string }[];
+  curseforgeEnabled: boolean;
 }
+
+// ---------- Modrinth (la API usa snake_case) ----------
 
 export interface ModrinthVersion {
   id: string;
@@ -533,18 +593,4 @@ export interface CfFile {
   gameVersions: string[];
   serverPackFileId: number | null;
   isServerPack: boolean | null;
-}
-
-export interface CfMod {
-  id: number;
-  name: string;
-  slug: string;
-  summary: string;
-  downloadCount: number;
-  logo: { thumbnailUrl: string } | null;
-  latestFiles: CfFile[];
-}
-
-export interface CfSearchResponse {
-  data: CfMod[];
 }

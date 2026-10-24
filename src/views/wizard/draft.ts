@@ -1,15 +1,21 @@
 import { maxMemory } from "../../components/ResourceFields";
-import type { HardwareInfo, ImportAnalysis, ImportRequest, ModLoader, NewServerRequest } from "../../lib/types";
+import type {
+  HardwareInfo,
+  ImportAnalysis,
+  ImportRequest,
+  ModLoader,
+  NewServerRequest,
+  SearchSource,
+} from "../../lib/types";
 
 /** Tipo de servidor: la familia Forge incluye NeoForge. */
 export type Kind = "vanilla" | "fabric" | "forge" | "import";
 /** Con Fabric o Forge: elegir la versión y los mods, o usar un modpack hecho. */
 export type ContentMode = "mods" | "modpack";
-export type PackSource = "modrinth" | "curseforge";
 export type ForgeLoader = "neoForge" | "forge";
 
 export interface PackChoice {
-  source: PackSource;
+  source: SearchSource;
   projectId: string;
   title: string;
   iconUrl: string | null;
@@ -17,8 +23,9 @@ export interface PackChoice {
   versionLabel: string | null;
 }
 
-/** Mod de Modrinth que se instala al terminar de crear el servidor. */
+/** Mod de Modrinth o CurseForge que se instala al terminar de crear el servidor. */
 export interface ModChoice {
+  source: SearchSource;
   projectId: string;
   title: string;
   iconUrl: string | null;
@@ -27,7 +34,6 @@ export interface ModChoice {
 export interface Draft {
   kind: Kind;
   content: ContentMode;
-  packSource: PackSource;
   forgeLoader: ForgeLoader;
   mcVersion: string | null;
   pack: PackChoice | null;
@@ -57,13 +63,18 @@ export function modLoader(d: Pick<Draft, "kind" | "forgeLoader">): ModLoader | n
   return null;
 }
 
-/** Loaders de Modrinth cuyos mods o modpacks valen para este servidor. */
-export function modrinthLoaders(d: Pick<Draft, "kind" | "content" | "forgeLoader">): string[] {
+/** Loaders (nombres de Modrinth) cuyos mods o modpacks valen para este servidor. */
+export function modrinthLoaders(d: Pick<Draft, "kind" | "content" | "forgeLoader" | "mcVersion">): string[] {
   if (d.kind === "fabric") return ["fabric"];
   if (d.kind !== "forge") return [];
   if (d.content === "modpack") return ["forge", "neoforge"];
-  return [d.forgeLoader === "neoForge" ? "neoforge" : "forge"];
+  if (d.forgeLoader === "forge") return ["forge"];
+  // NeoForge para 1.20.1 carga también los mods de Forge (como el servidor).
+  return d.mcVersion === "1.20.1" ? ["neoforge", "forge"] : ["neoforge"];
 }
+
+/** El mismo mod en el asistente y en las búsquedas: fuente e id. */
+export const modKey = (m: { source: SearchSource; projectId: string }) => `${m.source}:${m.projectId}`;
 
 /** Forge y los modpacks piden más memoria que vanilla o Fabric. */
 export const isHeavy = (d: Pick<Draft, "kind" | "content">) => d.kind === "forge" || isModpack(d);
@@ -85,7 +96,6 @@ export function newDraft(hardware: HardwareInfo | null, name: string, port: numb
   return {
     kind: "vanilla",
     content: "mods",
-    packSource: "modrinth",
     forgeLoader: "neoForge",
     mcVersion: null,
     pack: null,

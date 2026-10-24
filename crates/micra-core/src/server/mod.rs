@@ -6,6 +6,7 @@ pub mod affinity;
 pub mod backup;
 pub mod config;
 pub mod detect;
+pub mod diagnose;
 pub mod eula;
 pub mod gamerules;
 pub mod guard;

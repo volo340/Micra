@@ -50,8 +50,9 @@ impl AppPaths {
         self.root.join("cache")
     }
 
-    /// Copias de seguridad, fuera de la carpeta del servidor para que borrar
-    /// o restaurar un servidor nunca se lleve sus propias copias.
+    /// Copias de seguridad, fuera de la carpeta del servidor para que
+    /// restaurar un servidor nunca se lleve sus propias copias (al borrarlo,
+    /// la persona elige si se van con él).
     pub fn backups_dir(&self, server_id: &str) -> PathBuf {
         self.root.join("backups").join(server_id)
     }

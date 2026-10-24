@@ -14,6 +14,7 @@ use micra_core::providers::curseforge::CurseForgeClient;
 use micra_core::providers::modrinth::ModrinthClient;
 use micra_core::secrets::{SecretKey, SecretStore};
 use micra_core::server::config::ServerConfig;
+use micra_core::server::diagnose::CrashReport;
 use micra_core::server::pack::PackUpdate;
 use micra_core::server::process::ServerHandle;
 use micra_core::server::sandbox::SandboxStatus;
@@ -122,6 +123,8 @@ pub struct LiveInfo {
     /// BlueMap pide aceptar la descarga de recursos del juego.
     pub map_needs_accept: bool,
     pub last_backup_error: Option<String>,
+    /// Por qué falló el último arranque y qué mods quitar (hasta el próximo).
+    pub crash: Option<CrashReport>,
 }
 
 impl AppState {

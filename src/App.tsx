@@ -98,6 +98,15 @@ function Shell() {
     api.sendCommand(id, cmd).catch(onError);
   };
 
+  // Del servidor borrado se pasa al primero que quede (o al inicio).
+  const onDeleted = (id: string, name: string) => {
+    const rest = (data.servers ?? []).filter((s) => s.config.id !== id);
+    data.forget(id);
+    setView(rest.length ? { kind: "server", id: rest[0].config.id, tab: "overview" } : { kind: "home" });
+    toast({ tone: "success", title: t.server.deleted(name) });
+    data.refresh();
+  };
+
   const onCreated = async (config: ServerConfig, startNow: boolean) => {
     await data.refresh();
     setView({ kind: "server", id: config.id, tab: "overview" });
@@ -120,7 +129,6 @@ function Shell() {
     content = (
       <Wizard
         hardware={data.hardware}
-        appInfo={data.appInfo}
         usedPorts={data.servers.map((s) => s.config.port)}
         onCancel={() => setView(selected ? view : { kind: "home" })}
         onCreated={onCreated}
@@ -151,6 +159,7 @@ function Shell() {
         onRestart={() => restart(id)}
         onCommand={(cmd) => command(id, cmd)}
         onOpenAppSettings={() => setView({ kind: "settings" })}
+        onDeleted={() => onDeleted(id, selected.config.name)}
         onError={onError}
       />
     );

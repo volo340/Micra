@@ -90,12 +90,14 @@ abrir una consola. Micra lo hace todo por ti desde una sola ventana:
   modpack ya hecho; luego el nombre y la memoria, y Micra lo descarga y lo
   deja listo para encender. Si ya tienes un servidor, elige su carpeta: Micra
   lo copia, detecta la versión y los mods, y lo deja listo.
-- **Busca mods y modpacks por ti.** Busca por nombre o por tema entre los
-  mods de Modrinth y los modpacks de Modrinth y CurseForge; solo salen los que
-  valen para el tipo de servidor que elegiste. Micra descarga solo lo que
-  necesita el servidor e instala el loader que use (Fabric, Forge o NeoForge).
-  CurseForge pide una clave gratuita: en console.curseforge.com, copia la de
-  la página «API keys» y pégala en **Ajustes**. Micra la prueba al guardarla.
+- **Un solo buscador para Modrinth y CurseForge.** Busca por nombre o por tema
+  entre los mods y modpacks de las dos webs a la vez, y mezcla en el mismo
+  servidor mods de una y de otra; solo salen los que valen para el tipo de
+  servidor que elegiste (Fabric o Forge/NeoForge) y un mismo mod no se instala
+  dos veces. Micra descarga solo lo que necesita el servidor, con las
+  dependencias de cada mod, e instala el loader que use. CurseForge pide una
+  clave gratuita: en console.curseforge.com, copia la de la página «API keys»
+  y pégala en **Ajustes**. Micra la prueba al guardarla.
 - **Instala Java solo.** Cada versión de Minecraft necesita un Java distinto.
   Micra descarga el correcto y lo guarda en su propia carpeta, sin tocar el
   Java de tu sistema.
@@ -121,9 +123,14 @@ abrir una consola. Micra lo hace todo por ti desde una sola ventana:
   resto de `server.properties`, con una explicación en cada opción. En las
   versiones nuevas, el PvP, los monstruos, el Nether y los bloques de comandos
   se aplican como reglas del juego, que es como los entiende Minecraft.
-- **Mods y modpacks al día.** Busca e instala mods de Modrinth que valen para
-  tu servidor, te avisa cuando hay versiones nuevas y actualiza el modpack
-  entero conservando tu mundo y los mods que añadiste tú.
+- **Mods y modpacks al día.** Busca e instala mods de Modrinth y CurseForge
+  que valen para tu servidor, te avisa cuando hay versiones nuevas y actualiza
+  el modpack entero conservando tu mundo y los mods que añadiste tú.
+- **Te dice qué mod falla.** Si el servidor no arranca o se cae por culpa de
+  un mod, Micra lee el error y te dice cuál quitar: los que solo funcionan en
+  el juego (de cliente), los que necesitan otro mod que falta, los que son de
+  otra versión o de otro loader y el que dio el error. Los quitas con un clic
+  y vuelves a encenderlo.
 - **Mapa web.** En servidores con Fabric, Forge o NeoForge, instala BlueMap:
   un mapa 3D de tu mundo que se abre en el navegador.
 - **Estadísticas.** Gráficas de CPU, memoria, jugadores y TPS de la última
@@ -132,7 +139,9 @@ abrir una consola. Micra lo hace todo por ti desde una sola ventana:
   el servidor se detiene por un error, hay un problema de seguridad o falla
   una copia.
 - **Varios servidores a la vez.** Crea todos los que quieras, cada uno con su
-  puerto y sus recursos, y cambia entre ellos desde la barra lateral.
+  puerto y sus recursos, y cambia entre ellos desde la barra lateral. El que
+  ya no quieras se borra por completo desde su pestaña **Ajustes**, con o sin
+  sus copias de seguridad.
 - **En tu idioma.** Español, inglés, portugués, francés y alemán; por defecto,
   el de tu sistema.
 - **Se actualiza sola.** Cuando sale una versión nueva, Micra te avisa y se

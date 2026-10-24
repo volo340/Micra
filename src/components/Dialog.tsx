@@ -9,12 +9,15 @@ export interface ConfirmOptions {
   danger?: boolean;
   /** Campo de texto opcional (por ejemplo, el motivo de un baneo). */
   input?: { label: string; placeholder?: string };
+  /** Casilla opcional (por ejemplo, borrar también las copias); cada cambio llega a `onChange`. */
+  check?: { label: string; hint?: string; defaultChecked?: boolean; onChange: (checked: boolean) => void };
 }
 
 function ConfirmDialog(props: { options: ConfirmOptions; onConfirm: (value: string) => void; onCancel: () => void }) {
   const t = useT();
   const { options, onConfirm, onCancel } = props;
   const [value, setValue] = useState("");
+  const [checked, setChecked] = useState(Boolean(options.check?.defaultChecked));
   const confirmRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
@@ -48,6 +51,22 @@ function ConfirmDialog(props: { options: ConfirmOptions; onConfirm: (value: stri
               onChange={(e) => setValue(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && onConfirm(value.trim())}
             />
+          </label>
+        )}
+        {options.check && (
+          <label className="check check-sm">
+            <input
+              type="checkbox"
+              checked={checked}
+              onChange={(e) => {
+                setChecked(e.target.checked);
+                options.check?.onChange(e.target.checked);
+              }}
+            />
+            <span className="check-text">
+              <span>{options.check.label}</span>
+              {options.check.hint && <span className="field-hint">{options.check.hint}</span>}
+            </span>
           </label>
         )}
         <div className="dialog-actions">
