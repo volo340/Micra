@@ -189,7 +189,9 @@ impl ModrinthClient {
         if !loaders.is_empty() {
             req = req.query(&[("loaders", serde_json::to_string(loaders)?)]);
         }
-        Ok(req.send().await?.error_for_status()?.json().await?)
+        let versions = req.send().await?.error_for_status()?.json().await?;
+        // Con los modpacks Modrinth no aplica el filtro de loaders: se repite aquí.
+        Ok(of_loaders(versions, loaders))
     }
 
     /// Identifica archivos por su hash: devuelve la versión de Modrinth de
@@ -263,6 +265,14 @@ impl ModrinthClient {
     }
 }
 
+/// Solo las versiones de alguno de estos loaders (sin loaders, todas).
+pub fn of_loaders(mut versions: Vec<Version>, loaders: &[&str]) -> Vec<Version> {
+    if !loaders.is_empty() {
+        versions.retain(|v| v.loaders.iter().any(|l| loaders.contains(&l.as_str())));
+    }
+    versions
+}
+
 /// Facets de Modrinth: lista de listas; OR dentro de cada lista, AND entre listas.
 fn build_facets(q: &SearchQuery) -> String {
     let mut facets: Vec<Vec<String>> = vec![
@@ -313,5 +323,40 @@ mod tests {
             build_facets(&quilt),
             r#"[["project_type:mod"],["server_side:required","server_side:optional"],["categories:quilt","categories:fabric"]]"#
         );
+    }
+
+    fn version(id: &str, loaders: &[&str]) -> Version {
+        Version {
+            id: id.into(),
+            project_id: "pack".into(),
+            name: id.into(),
+            version_number: id.into(),
+            version_type: "release".into(),
+            game_versions: vec!["1.21.1".into()],
+            loaders: loaders.iter().map(|l| l.to_string()).collect(),
+            date_published: String::new(),
+            files: Vec::new(),
+            dependencies: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn versions_of_loaders() {
+        let all = vec![
+            version("fabric", &["fabric"]),
+            version("forge", &["forge"]),
+            version("neo", &["neoforge"]),
+            version("both", &["fabric", "quilt"]),
+        ];
+        let ids = |list: Vec<Version>| list.into_iter().map(|v| v.id).collect::<Vec<_>>();
+        assert_eq!(
+            ids(of_loaders(all.clone(), &["fabric"])),
+            ["fabric", "both"]
+        );
+        assert_eq!(
+            ids(of_loaders(all.clone(), &["forge", "neoforge"])),
+            ["forge", "neo"]
+        );
+        assert_eq!(of_loaders(all, &[]).len(), 4);
     }
 }

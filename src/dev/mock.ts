@@ -9,6 +9,8 @@
 //   ?update=1         hay una versión nueva de Micra
 //   ?malware=1        el análisis de mods encuentra algo
 //   ?modfail=1        el asistente no consigue instalar el segundo mod elegido
+//
+// Una clave de CurseForge que empiece por cfc_pat_ se rechaza, como la «Profile API key».
 import { emit } from "@tauri-apps/api/event";
 import { mockIPC } from "@tauri-apps/api/mocks";
 import { loaderName } from "../lib/format";
@@ -949,6 +951,21 @@ const PACKS = [
   ],
 ] as const;
 
+/** Packs con versiones para varios loaders, como algunos de Modrinth: [versión, Minecraft, loader]. */
+const PACK_VERSIONS: Record<string, [string, string, string][]> = {
+  "supervivencia-extrema": [
+    ["1.12.7", "1.21.1", "fabric"],
+    ["1.12.6", "1.21.1", "fabric"],
+    ["1.9.3", "1.19.2", "forge"],
+    ["1.12.5", "1.20.1", "fabric"],
+    ["1.9.2", "1.19.2", "forge"],
+  ],
+};
+
+const packVersions = (p: (typeof PACKS)[number]): [string, string, string][] =>
+  PACK_VERSIONS[p[0]] ?? ["2.4.1", "2.4.0", "2.3.2"].map((v) => [v, p[5], p[6]]);
+const packLoaders = (p: (typeof PACKS)[number]) => [...new Set(packVersions(p).map(([, , l]) => l))];
+
 const slug = (name: string) =>
   name
     .toLowerCase()
@@ -994,8 +1011,14 @@ async function provision(req: NewServerRequest): Promise<ServerConfig> {
       : source.kind === "curseForge"
         ? PACKS[source.modId - 1000]
         : undefined;
-  const mcVersion = "mcVersion" in source ? source.mcVersion : (pack?.[5] ?? "1.20.1");
-  const kind = pack ? (pack[6] === "neoforge" ? "neoForge" : pack[6]) : source.kind;
+  // La versión elegida del pack dice su Minecraft y su loader.
+  const chosen =
+    pack && source.kind === "modrinth"
+      ? packVersions(pack).find(([v]) => source.versionId === `${pack[0]}-${v}`)
+      : undefined;
+  const mcVersion = "mcVersion" in source ? source.mcVersion : (chosen?.[1] ?? pack?.[5] ?? "1.20.1");
+  const packLoader = chosen?.[2] ?? pack?.[6];
+  const kind = packLoader ? (packLoader === "neoforge" ? "neoForge" : packLoader) : source.kind;
   const loader: ServerConfig["loader"] =
     kind === "fabric"
       ? { kind: "fabric", loaderVersion: "0.17.2" }
@@ -1090,7 +1113,7 @@ mockIPC(
       // La app
       case "app_info":
         return {
-          version: "0.2.2",
+          version: "0.2.3",
           dataDir: DATA_DIR,
           curseforgeEnabled: secrets.curseforgeApiKey,
           language: settings.language ?? systemLang,
@@ -1112,6 +1135,10 @@ mockIPC(
         return view();
       case "set_secret":
         await sleep(200);
+        // Como Micra, la clave se prueba con CurseForge antes de guardarla.
+        if (a.key === "curseforgeApiKey" && String(a.value).startsWith("cfc_pat_")) {
+          throw "CurseForge no acepta esa clave: es la «Profile API key» (empieza por cfc_pat_). En console.curseforge.com abre «API keys», copia la clave que aparece allí y guárdala en Ajustes";
+        }
         secrets[a.key as SecretKey] = true;
         return view();
       case "delete_secret":
@@ -1124,7 +1151,7 @@ mockIPC(
         await sleep(600);
         return params.get("update")
           ? {
-              version: "0.2.3",
+              version: "0.2.4",
               notes: "Copias más rápidas y correcciones en el túnel.",
               date: new Date().toISOString(),
               canInstall: true,
@@ -1159,35 +1186,37 @@ mockIPC(
         const q = query.query.toLowerCase();
         const hits = PACKS.filter(
           (p) =>
-            (!loaders || loaders.includes(p[6])) &&
+            (!loaders || packLoaders(p).some((l) => loaders.includes(l))) &&
             (!q || p[1].toLowerCase().includes(q) || p[3].toLowerCase().includes(q)),
-        ).map(([pid, title, author, description, downloads, version, loader]) => ({
-          project_id: pid,
-          slug: pid,
-          title,
-          author,
-          description,
-          downloads,
+        ).map((p) => ({
+          project_id: p[0],
+          slug: p[0],
+          title: p[1],
+          author: p[2],
+          description: p[3],
+          downloads: p[4],
           icon_url: null,
-          categories: [loader],
-          versions: [version],
+          categories: packLoaders(p),
+          versions: [p[5]],
         }));
         return { hits, total_hits: hits.length, offset: 0, limit: 24 };
       }
       case "modrinth_versions": {
         await sleep(300);
         const pack = PACKS.find((p) => p[0] === a.projectId);
-        const loaders = (a.loaders as string[] | null) ?? null;
-        if (pack && loaders && !loaders.includes(pack[6])) return [];
-        return ["2.4.1", "2.4.0", "2.3.2"].map((v) => ({
-          id: `${a.projectId}-${v}`,
-          name: v,
-          version_number: v,
-          version_type: "release",
-          game_versions: [pack?.[5] ?? "1.20.1"],
-          loaders: [pack?.[6] ?? "fabric"],
-          date_published: "2026-09-01",
-        }));
+        const loaders = (a.loaders as string[] | null) ?? [];
+        // Como el comando de Micra: solo las versiones de los loaders pedidos.
+        return (pack ? packVersions(pack) : [])
+          .filter(([, , loader]) => !loaders.length || loaders.includes(loader))
+          .map(([v, mc, loader]) => ({
+            id: `${a.projectId}-${v}`,
+            name: v,
+            version_number: v,
+            version_type: "release",
+            game_versions: [mc],
+            loaders: [loader],
+            date_published: "2026-09-01",
+          }));
       }
       case "search_curseforge": {
         await sleep(350);

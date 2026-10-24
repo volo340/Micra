@@ -1,18 +1,25 @@
 //! Cliente de la API oficial de CurseForge (https://docs.curseforge.com/rest-api/).
 //!
-//! Requiere una API key propia (se solicita gratis en https://console.curseforge.com/).
-//! Además, algunos autores desactivan la distribución por terceros: en ese caso
-//! `download_url` llega vacío y hay que mandar al usuario a la web.
+//! Requiere una API key propia: se consigue gratis en https://console.curseforge.com/,
+//! en la página «API keys» (no confundir con la «Profile API key» del perfil).
+//! Desde el 16 de julio de 2026 el CDN de CurseForge también pide la clave para
+//! descargar archivos. Además, algunos autores desactivan la distribución por
+//! terceros: en ese caso `download_url` llega vacío y hay que mandar al usuario
+//! a la web.
 
 use std::path::Path;
 
+use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
 
-use crate::download::{download_file, ExpectedHash, HashAlgo, Progress};
-use crate::{Error, Result};
+use crate::download::{download_request, ExpectedHash, HashAlgo, Progress};
+use crate::{tr, Error, Result};
 
 const API: &str = "https://api.curseforge.com/v1";
 const MINECRAFT_GAME_ID: u32 = 432;
+/// Así empiezan las «Profile API key» del perfil de la consola, que se
+/// confunden con la clave de «API keys».
+const PROFILE_KEY_PREFIX: &str = "cfc_pat_";
 
 /// `modLoaderType` de CurseForge, nombre en Modrinth y etiqueta de CurseForge.
 const LOADERS: &[(u8, &str, &str)] = &[
@@ -21,6 +28,14 @@ const LOADERS: &[(u8, &str, &str)] = &[
     (5, "quilt", "Quilt"),
     (6, "neoforge", "NeoForge"),
 ];
+
+/// Nombre de Modrinth de una etiqueta de loader de CurseForge ("NeoForge").
+fn loader_from_label(label: &str) -> Option<&'static str> {
+    LOADERS
+        .iter()
+        .find(|(.., l)| l.eq_ignore_ascii_case(label))
+        .map(|(_, name, _)| *name)
+}
 
 /// IDs de clase de CurseForge para Minecraft.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -91,18 +106,10 @@ impl CfMod {
         let by_id = self
             .latest_files_indexes
             .iter()
-            .filter_map(|i| LOADERS.iter().find(|(id, ..)| Some(*id) == i.mod_loader));
-        // `game_versions` mezcla versiones del juego con loaders ("Forge").
-        let by_label = self
-            .latest_files
-            .iter()
-            .flat_map(|f| &f.game_versions)
-            .filter_map(|v| {
-                LOADERS
-                    .iter()
-                    .find(|(.., label)| label.eq_ignore_ascii_case(v))
-            });
-        let mut out: Vec<&'static str> = by_id.chain(by_label).map(|(_, name, _)| *name).collect();
+            .filter_map(|i| LOADERS.iter().find(|(id, ..)| Some(*id) == i.mod_loader))
+            .map(|(_, name, _)| *name);
+        let by_label = self.latest_files.iter().flat_map(CfFile::loaders);
+        let mut out: Vec<&'static str> = by_id.chain(by_label).collect();
         out.sort_unstable();
         out.dedup();
         out
@@ -149,6 +156,20 @@ impl CfFile {
             .find(|v| v.chars().next().is_some_and(|c| c.is_ascii_digit()))
     }
 
+    /// Loaders del archivo (nombres de Modrinth), sacados de `game_versions`.
+    pub fn loaders(&self) -> Vec<&'static str> {
+        self.game_versions
+            .iter()
+            .filter_map(|v| loader_from_label(v))
+            .collect()
+    }
+
+    /// Si es de alguno de estos loaders. Los que no dicen el suyo se quedan.
+    pub fn matches_loaders(&self, wanted: &[&str]) -> bool {
+        let own = self.loaders();
+        own.is_empty() || own.iter().any(|l| wanted.contains(l))
+    }
+
     fn sha1(&self) -> Option<&str> {
         // algo: 1 = SHA1, 2 = MD5
         self.hashes
@@ -188,25 +209,56 @@ impl CurseForgeClient {
             .map(|k| Self::new(http, k))
     }
 
-    async fn get<T: serde::de::DeserializeOwned>(
-        &self,
-        path: &str,
-        query: &[(&str, String)],
-    ) -> Result<Envelope<T>> {
-        let res = self
+    async fn send(&self, path: &str, query: &[(&str, String)]) -> Result<reqwest::Response> {
+        Ok(self
             .http
             .get(format!("{API}{path}"))
             .header("x-api-key", &self.api_key)
             .header("Accept", "application/json")
             .query(query)
             .send()
-            .await?;
-        if res.status() == reqwest::StatusCode::FORBIDDEN {
-            return Err(Error::Api(
-                "CurseForge rechazó la API key o el recurso no es distribuible".into(),
-            ));
+            .await?)
+    }
+
+    async fn get<T: serde::de::DeserializeOwned>(
+        &self,
+        path: &str,
+        query: &[(&str, String)],
+    ) -> Result<Envelope<T>> {
+        let res = self.send(path, query).await?;
+        if rejects_key(res.status()) {
+            return Err(self.key_rejected());
         }
         Ok(res.error_for_status()?.json().await?)
+    }
+
+    /// Pregunta a CurseForge por Minecraft para probar la clave: `Ok(false)`
+    /// si la rechaza y error si no se pudo preguntar (sin internet...).
+    pub async fn check_key(&self) -> Result<bool> {
+        let res = self
+            .send(&format!("/games/{MINECRAFT_GAME_ID}"), &[])
+            .await?;
+        if rejects_key(res.status()) {
+            return Ok(false);
+        }
+        res.error_for_status()?;
+        Ok(true)
+    }
+
+    /// Error para una clave que CurseForge no acepta, con una pista si es la
+    /// «Profile API key» de la consola, que se confunde a menudo con la buena.
+    pub fn key_rejected(&self) -> Error {
+        Error::Api(if self.api_key.starts_with(PROFILE_KEY_PREFIX) {
+            tr!(
+                "CurseForge no acepta esa clave: es la «Profile API key» (empieza por {PROFILE_KEY_PREFIX}). En console.curseforge.com abre «API keys», copia la clave que aparece allí y guárdala en Ajustes",
+                "CurseForge does not accept that key: it is the \"Profile API key\" (it starts with {PROFILE_KEY_PREFIX}). On console.curseforge.com, open \"API keys\", copy the key shown there and save it in Settings"
+            )
+        } else {
+            tr!(
+                "CurseForge no acepta la clave de API. En console.curseforge.com abre «API keys», copia la clave entera y guárdala en Ajustes",
+                "CurseForge does not accept the API key. On console.curseforge.com, open \"API keys\", copy the whole key and save it in Settings"
+            )
+        })
     }
 
     /// Con `loaders` (nombres de Modrinth: "forge", "neoforge", "fabric")
@@ -232,20 +284,20 @@ impl CurseForgeClient {
         if let Some(gv) = game_version {
             params.push(("gameVersion", gv.to_string()));
         }
-        let labels: Vec<&str> = LOADERS
+        let types: Vec<String> = LOADERS
             .iter()
             .filter(|(_, name, _)| loaders.contains(name))
-            .map(|(.., label)| *label)
+            .map(|(id, ..)| id.to_string())
             .collect();
         let mut found = None;
-        if !labels.is_empty() {
+        if !types.is_empty() {
             let mut filtered = params.clone();
-            filtered.push(("modLoaderTypes", serde_json::to_string(&labels)?));
-            match self.get::<Vec<CfMod>>("/mods/search", &filtered).await {
-                Ok(env) => found = Some(env),
-                // Si la API no acepta el filtro, se filtra aquí.
-                Err(Error::Http(e)) if e.status() == Some(reqwest::StatusCode::BAD_REQUEST) => {}
-                Err(e) => return Err(e),
+            // Con los números (`[1,6]`) no hay dudas sobre cómo escribir los nombres.
+            filtered.push(("modLoaderTypes", format!("[{}]", types.join(","))));
+            let res = self.send("/mods/search", &filtered).await?;
+            // Si CurseForge no acepta el filtro, se busca sin él y se filtra aquí.
+            if res.status().is_success() {
+                found = res.json::<Envelope<Vec<CfMod>>>().await.ok();
             }
         }
         let env: Envelope<Vec<CfMod>> = match found {
@@ -303,14 +355,58 @@ impl CurseForgeClient {
     ) -> Result<()> {
         let url = match &file.download_url {
             Some(u) => u.clone(),
-            None => {
-                let path = format!("/mods/{}/files/{}/download-url", file.mod_id, file.id);
-                self.get::<String>(&path, &[]).await?.data
-            }
+            None => self.download_url(file).await?,
         };
         let expected = file.sha1().map(|h| ExpectedHash::new(HashAlgo::Sha1, h));
-        download_file(&self.http, &url, dest, expected.as_ref(), progress).await
+        let mut request = self.http.get(&url);
+        // Desde el 16 de julio de 2026 el CDN de CurseForge también pide la clave.
+        if is_curseforge_host(&url) {
+            request = request.header("x-api-key", &self.api_key);
+        }
+        download_request(request, dest, expected.as_ref(), progress).await
     }
+
+    /// Enlace de un archivo que no lo trae. CurseForge responde 403 cuando el
+    /// autor no deja descargarlo desde otras apps.
+    async fn download_url(&self, file: &CfFile) -> Result<String> {
+        let path = format!("/mods/{}/files/{}/download-url", file.mod_id, file.id);
+        let res = self.send(&path, &[]).await?;
+        match res.status() {
+            StatusCode::FORBIDDEN => {
+                let name = &file.display_name;
+                Err(Error::Api(tr!(
+                    "el autor de «{name}» no deja descargarlo desde otras apps: descárgalo desde la web de CurseForge",
+                    "the author of \"{name}\" does not allow downloading it from other apps: get it from the CurseForge website"
+                )))
+            }
+            StatusCode::UNAUTHORIZED => Err(self.key_rejected()),
+            _ => Ok(res
+                .error_for_status()?
+                .json::<Envelope<String>>()
+                .await?
+                .data),
+        }
+    }
+}
+
+/// CurseForge responde 401 o 403 cuando no acepta la clave.
+fn rejects_key(status: StatusCode) -> bool {
+    status == StatusCode::UNAUTHORIZED || status == StatusCode::FORBIDDEN
+}
+
+/// La clave solo viaja a CurseForge y a su CDN (forgecdn.net), siempre por HTTPS.
+fn is_curseforge_host(url: &str) -> bool {
+    let Ok(url) = reqwest::Url::parse(url) else {
+        return false;
+    };
+    let host = url.host_str().unwrap_or_default();
+    url.scheme() == "https"
+        && ["forgecdn.net", "curseforge.com"].iter().any(|domain| {
+            host == *domain
+                || host
+                    .strip_suffix(domain)
+                    .is_some_and(|sub| sub.ends_with('.'))
+        })
 }
 
 #[cfg(test)]
@@ -365,5 +461,47 @@ mod tests {
 
         // Sin datos de loader no se descarta.
         assert!(pack(&[], &["1.20.1"]).matches_loaders(&["fabric"]));
+    }
+
+    #[test]
+    fn loaders_of_a_file() {
+        let file = &pack(&[], &["1.21.1", "NeoForge"]).latest_files[0];
+        assert_eq!(file.loaders(), vec!["neoforge"]);
+        assert!(file.matches_loaders(&["forge", "neoforge"]));
+        assert!(!file.matches_loaders(&["fabric"]));
+        assert!(pack(&[], &["1.21.1"]).latest_files[0].matches_loaders(&["fabric"]));
+    }
+
+    #[test]
+    fn key_only_goes_to_curseforge() {
+        assert!(is_curseforge_host(
+            "https://edge.forgecdn.net/files/1/2/pack.zip"
+        ));
+        assert!(is_curseforge_host(
+            "https://mediafilez.forgecdn.net/files/1/2/pack.zip"
+        ));
+        assert!(is_curseforge_host("https://api.curseforge.com/v1/mods/1"));
+        assert!(!is_curseforge_host(
+            "http://edge.forgecdn.net/files/1/2/pack.zip"
+        ));
+        assert!(!is_curseforge_host("https://evilforgecdn.net/pack.zip"));
+        assert!(!is_curseforge_host(
+            "https://forgecdn.net.example.com/pack.zip"
+        ));
+        assert!(!is_curseforge_host("https://github.com/pack.zip"));
+        assert!(!is_curseforge_host("no es una url"));
+    }
+
+    #[test]
+    fn rejected_key_hint() {
+        let http = reqwest::Client::new();
+        let profile = CurseForgeClient::new(http.clone(), "cfc_pat_0123456789abcdefghij");
+        assert!(profile
+            .key_rejected()
+            .to_string()
+            .contains("Profile API key"));
+        let other = CurseForgeClient::new(http, "$2a$10$0123456789abcdefghijklmn");
+        assert!(!other.key_rejected().to_string().contains("Profile API key"));
+        assert!(other.key_rejected().to_string().contains("API keys"));
     }
 }

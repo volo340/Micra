@@ -590,7 +590,8 @@ export const pt: Dict = {
     curseforgeKey: "Chave de API do CurseForge",
     keySaved: "Chave salva no chaveiro",
     builtInKey: "Esta versão do Micra já vem com uma chave; você pode usar a sua se quiser.",
-    curseforgeHint: "O CurseForge pede uma chave gratuita. Consiga a sua em",
+    curseforgeHint:
+      "O CurseForge pede uma chave gratuita: copie a chave da página “API keys” (não a “Profile API key”) em",
     secretSaved: "Salvo no chaveiro",
     computer: "Este computador",
     cpu: "Processador",
@@ -657,7 +658,7 @@ export const pt: Dict = {
       `O Micra vai instalar a versão estável mais recente do ${loader} para esta versão do Minecraft.`,
     packVersionsFailed: (e: string) => `Não foi possível carregar as versões: ${e}`,
     packVersionsLoading: "Carregando versões…",
-    packNoServer: "Este modpack não tem versão para servidor.",
+    packNoServer: (family: string) => `Este modpack não tem versão de servidor para ${family}.`,
     packVersion: "Versão do modpack",
     packSearch: (source: string) => `Buscar no ${source}: aventura, tecnologia, magia…`,
     searchFailed: (e: string) => `Não foi possível buscar: ${e}`,

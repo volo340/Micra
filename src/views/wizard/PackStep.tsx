@@ -168,7 +168,7 @@ export function PackPicker({ source, loaders, family, value, onChange }: Props) 
             ) : versions === null ? (
               <span className="subtle">{t.wizard.packVersionsLoading}</span>
             ) : versions.length === 0 ? (
-              <span className="error-text">{t.wizard.packNoServer}</span>
+              <span className="error-text">{t.wizard.packNoServer(family)}</span>
             ) : (
               <select
                 className="select"

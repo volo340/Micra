@@ -94,6 +94,8 @@ abrir una consola. Micra lo hace todo por ti desde una sola ventana:
   mods de Modrinth y los modpacks de Modrinth y CurseForge; solo salen los que
   valen para el tipo de servidor que elegiste. Micra descarga solo lo que
   necesita el servidor e instala el loader que use (Fabric, Forge o NeoForge).
+  CurseForge pide una clave gratuita: en console.curseforge.com, copia la de
+  la página «API keys» y pégala en **Ajustes**. Micra la prueba al guardarla.
 - **Instala Java solo.** Cada versión de Minecraft necesita un Java distinto.
   Micra descarga el correcto y lo guarda en su propia carpeta, sin tocar el
   Java de tu sistema.

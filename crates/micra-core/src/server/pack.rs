@@ -9,9 +9,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::archive::{self, safe_join};
 use crate::fsutil::write_atomic;
-use crate::providers::curseforge::CurseForgeClient;
+use crate::providers::curseforge::{CfFile, CurseForgeClient};
 use crate::providers::loaders;
-use crate::providers::modrinth::ModrinthClient;
+use crate::providers::modrinth::{ModrinthClient, Version};
 use crate::providers::mrpack::{self, is_protected};
 use crate::provision::{cache_name, internal_paths, ProvisionStep, Provisioner};
 use crate::server::backup::{create_backup, BackupKind, BackupScope};
@@ -81,42 +81,34 @@ pub async fn check_update(
             let versions = modrinth
                 .project_versions(project_id, Some(&cfg.mc_version), None)
                 .await?;
-            // Modrinth las da de la más nueva a la más antigua: solo cuentan
-            // las anteriores a la instalada.
-            let newer: Vec<_> = versions
-                .iter()
-                .take_while(|v| &v.id != version_id)
-                .collect();
-            let installed_is_release = versions
-                .iter()
-                .find(|v| &v.id == version_id)
-                .is_none_or(|v| v.version_type == "release");
-            let pick =
-                newer
-                    .iter()
-                    .find(|v| v.version_type == "release")
-                    .or(if installed_is_release {
-                        None
-                    } else {
-                        newer.first()
-                    });
-            Ok(pick.map(|v| PackUpdate {
-                current,
-                latest: v.version_number.clone(),
-                target: UpdateTarget::Modrinth {
-                    version_id: v.id.clone(),
-                },
-            }))
+            let loaders = cfg.loader.modrinth_loaders(&cfg.mc_version);
+            Ok(
+                modrinth_update(&versions, version_id, &loaders).map(|v| PackUpdate {
+                    current,
+                    latest: v.version_number.clone(),
+                    target: UpdateTarget::Modrinth {
+                        version_id: v.id.clone(),
+                    },
+                }),
+            )
         }
         Some(ContentSource::CurseForge { mod_id, file_id }) => {
             let Some(cf) = curseforge else {
                 return Ok(None);
             };
             let files = cf.files(*mod_id, Some(&cfg.mc_version)).await?;
+            // Del mismo loader que el archivo instalado o, si no se sabe, que el servidor.
+            let loaders = files
+                .iter()
+                .find(|f| f.id == *file_id)
+                .map(CfFile::loaders)
+                .filter(|l| !l.is_empty())
+                .unwrap_or_else(|| cfg.loader.modrinth_loaders(&cfg.mc_version));
             let pick = files
                 .iter()
                 .filter(|f| f.id > *file_id && f.is_server_pack != Some(true))
                 .filter(|f| f.server_pack_file_id.is_some())
+                .filter(|f| loaders.is_empty() || f.matches_loaders(&loaders))
                 .max_by_key(|f| f.id);
             Ok(pick.map(|f| PackUpdate {
                 current,
@@ -125,6 +117,37 @@ pub async fn check_update(
             }))
         }
     }
+}
+
+/// Versión de Modrinth a la que actualizar: la release más nueva que la
+/// instalada y del mismo loader (un pack puede tener versiones para Fabric y
+/// para Forge). Si la instalada no es release, también vale la más nueva.
+/// Modrinth las da de la más nueva a la más antigua.
+fn modrinth_update<'a>(
+    versions: &'a [Version],
+    installed: &str,
+    server_loaders: &[&str],
+) -> Option<&'a Version> {
+    let current = versions.iter().find(|v| v.id == installed);
+    let loaders: Vec<&str> = match current {
+        Some(v) if !v.loaders.is_empty() => v.loaders.iter().map(String::as_str).collect(),
+        _ => server_loaders.to_vec(),
+    };
+    let newer: Vec<&Version> = versions
+        .iter()
+        .take_while(|v| v.id != installed)
+        .filter(|v| loaders.is_empty() || v.loaders.iter().any(|l| loaders.contains(&l.as_str())))
+        .collect();
+    let installed_is_release = current.is_none_or(|v| v.version_type == "release");
+    newer
+        .iter()
+        .find(|v| v.version_type == "release")
+        .or(if installed_is_release {
+            None
+        } else {
+            newer.first()
+        })
+        .copied()
 }
 
 /// Lo que una actualización del pack nunca toca: el mundo, la configuración
@@ -367,6 +390,55 @@ fn other_minecraft(mc: &str) -> Error {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn version(id: &str, kind: &str, loaders: &[&str]) -> Version {
+        Version {
+            id: id.into(),
+            project_id: "pack".into(),
+            name: id.into(),
+            version_number: id.into(),
+            version_type: kind.into(),
+            game_versions: vec!["1.20.1".into()],
+            loaders: loaders.iter().map(|l| l.to_string()).collect(),
+            date_published: String::new(),
+            files: Vec::new(),
+            dependencies: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn pack_updates_keep_the_loader() {
+        let versions = [
+            version("forge-3", "release", &["forge"]),
+            version("fabric-3-beta", "beta", &["fabric"]),
+            version("fabric-2", "release", &["fabric"]),
+            version("fabric-1", "release", &["fabric"]),
+        ];
+        let id = |v: Option<&Version>| v.map(|v| v.id.clone());
+        // Un servidor Fabric nunca pasa a la versión de Forge.
+        assert_eq!(
+            id(modrinth_update(&versions, "fabric-1", &["fabric"])),
+            Some("fabric-2".into())
+        );
+        assert_eq!(
+            id(modrinth_update(&versions, "fabric-2", &["fabric"])),
+            None
+        );
+        // Desde una beta vale la beta más nueva.
+        let betas = [
+            version("fabric-4-beta", "beta", &["fabric"]),
+            version("fabric-3-beta", "beta", &["fabric"]),
+        ];
+        assert_eq!(
+            id(modrinth_update(&betas, "fabric-3-beta", &["fabric"])),
+            Some("fabric-4-beta".into())
+        );
+        // Si la instalada ya no está, cuenta el loader del servidor.
+        assert_eq!(
+            id(modrinth_update(&versions, "borrada", &["forge"])),
+            Some("forge-3".into())
+        );
+    }
 
     #[test]
     fn dropped_files_and_disabled_mods() {
