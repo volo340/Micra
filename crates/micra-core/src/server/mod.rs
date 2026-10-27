@@ -12,6 +12,7 @@ pub mod gamerules;
 pub mod guard;
 pub mod launcher;
 pub mod map;
+pub mod missing;
 pub mod mods;
 pub mod monitor;
 pub mod pack;

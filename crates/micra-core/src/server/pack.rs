@@ -7,8 +7,8 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::archive::{self, safe_join};
-use crate::fsutil::write_atomic;
+use crate::archive::{self, safe_join, safe_join_no_links};
+use crate::fsutil::{internal_dir, write_atomic};
 use crate::providers::curseforge::{CfFile, CurseForgeClient};
 use crate::providers::loaders;
 use crate::providers::modrinth::{ModrinthClient, Version};
@@ -37,11 +37,12 @@ impl PackManifest {
     }
 
     pub async fn save(&self, server_dir: &Path) -> Result<()> {
-        let path = server_dir.join(MANIFEST);
-        if let Some(parent) = path.parent() {
-            tokio::fs::create_dir_all(parent).await?;
-        }
-        write_atomic(&path, &serde_json::to_vec_pretty(self)?).await
+        internal_dir(server_dir, ".micra")?;
+        write_atomic(
+            &server_dir.join(MANIFEST),
+            &serde_json::to_vec_pretty(self)?,
+        )
+        .await
     }
 }
 
@@ -155,18 +156,8 @@ fn modrinth_update<'a>(
 pub fn protected_paths(server_dir: &Path) -> Vec<String> {
     let level = level_name(&read_properties_sync(server_dir));
     let mut out = vec![format!("{level}_nether"), format!("{level}_the_end"), level];
-    out.extend(
-        [
-            "server.properties",
-            "eula.txt",
-            "whitelist.json",
-            "ops.json",
-            "banned-players.json",
-            "banned-ips.json",
-            "usercache.json",
-        ]
-        .map(String::from),
-    );
+    out.extend(["server.properties", "eula.txt", "usercache.json"].map(String::from));
+    out.extend(crate::provision::PLAYER_LISTS.iter().map(|p| p.to_string()));
     out.extend(internal_paths());
     out
 }
@@ -183,7 +174,8 @@ async fn remove_dropped_files(
         if new.contains(rel) || is_protected(rel, protected) {
             continue;
         }
-        let Ok(path) = safe_join(server_dir, rel) else {
+        // Nunca a través de un enlace: borraría archivos de fuera.
+        let Ok(path) = safe_join_no_links(server_dir, rel) else {
             continue;
         };
         let _ = tokio::fs::remove_file(&path).await;
@@ -200,7 +192,7 @@ async fn keep_disabled(server_dir: &Path, new_files: &HashSet<String>, before: &
         if !new_files.contains(rel) {
             continue;
         }
-        let Ok(path) = safe_join(server_dir, rel) else {
+        let Ok(path) = safe_join_no_links(server_dir, rel) else {
             continue;
         };
         let mut disabled = path.clone().into_os_string();

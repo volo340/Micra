@@ -82,6 +82,7 @@ fn main() {
             mods::update_mod,
             mods::search_mods,
             mods::install_mod,
+            mods::install_missing_mod,
             mods::scan_mods,
             mods::quarantine_mod,
             mods::check_pack_update,

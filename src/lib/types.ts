@@ -110,7 +110,7 @@ export type TunnelInfo =
 
 export type SandboxStatus =
   | { kind: "disabled" }
-  | { kind: "landlock"; abi: number }
+  | { kind: "landlock"; abi: number; seccomp: boolean }
   | { kind: "jobObject"; lowIntegrity: boolean }
   | { kind: "unavailable"; reason: string };
 
@@ -122,16 +122,28 @@ export interface PackUpdate {
   target: UpdateTarget;
 }
 
-/** Por qué un mod impide arrancar (o no hace falta en el servidor). */
+/** Por qué un mod impide arrancar. */
 export type CulpritReason =
   | { kind: "clientOnly" }
-  | { kind: "missingDependency"; dependency: string }
-  | { kind: "wrongVersion"; needs: string }
   | { kind: "wrongLoader"; loader: string }
+  | { kind: "gameVersion"; needs: string | null }
+  | { kind: "loaderVersion"; loader: string; needs: string | null }
+  | { kind: "javaVersion"; needs: string }
+  | { kind: "dependencyVersion"; dependency: string; needs: string | null }
+  | { kind: "missingDependency"; dependency: string }
   | { kind: "incompatible"; other: string }
   | { kind: "duplicate" }
+  | { kind: "mixinFailed" }
   | { kind: "failed" }
+  | { kind: "errorInCode" }
   | { kind: "suspected" };
+
+/**
+ * Lo seguro que es que un mod sea el problema: `certain` lo dice el loader o
+ * el error lo nombra; `likely` el error ocurrió en su código; `possible`
+ * aparece en el error pero puede no ser la causa.
+ */
+export type Confidence = "certain" | "likely" | "possible";
 
 export interface Culprit {
   /** Archivo en `mods/` (lo que se quita). */
@@ -139,18 +151,51 @@ export interface Culprit {
   modId: string | null;
   name: string | null;
   reason: CulpritReason;
-  /** Lo señala el error; si no, es un mod que no hace falta en el servidor. */
-  inLog: boolean;
+  confidence: Confidence;
+  /** Las líneas del error que lo señalan. */
+  evidence: string | null;
 }
+
+/** Dónde descargar un mod que falta (con versión para este servidor). */
+export interface FoundMod {
+  source: SearchSource;
+  projectId: string;
+  title: string;
+}
+
+export interface ModRef {
+  fileName: string;
+  name: string | null;
+}
+
+/** Un mod que piden otros y no está: se arregla instalándolo (o activándolo). */
+export interface MissingMod {
+  id: string;
+  /** Versión que piden, si el error la dice. */
+  version: string | null;
+  requiredBy: ModRef[];
+  /** Está en `mods/` pero desactivado. */
+  disabledFile: string | null;
+  /** Llega un poco después del aviso (se busca en Modrinth y CurseForge). */
+  found: FoundMod | null;
+}
+
+/** Lo que pasó cuando no es culpa de un mod concreto. */
+export type CrashCause = { kind: "outOfMemory" } | { kind: "portInUse" } | { kind: "watchdog" };
 
 /** Por qué falló el último arranque de un servidor con mods. */
 export interface CrashReport {
+  /** Del más seguro al menos. */
   culprits: Culprit[];
-  /** Mods que piden otros y no están instalados. */
-  missing: string[];
+  missing: MissingMod[];
+  cause: CrashCause | null;
   headline: string | null;
   reportFile: string | null;
   duringStart: boolean;
+  /** El error es por cargar clases del juego (cliente) en el servidor. */
+  clientClasses: boolean;
+  /** Ya se buscó dónde descargar los que faltan: los que no tienen `found` no se encontraron. */
+  missingChecked: boolean;
 }
 
 /** Lo que el panel muestra de cada servidor además de su estado. */

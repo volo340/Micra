@@ -73,7 +73,10 @@ backend simulado (`src/dev/mock.ts`), sin Rust ni Tauri:
 - `?update=1`: hay una versión nueva de Micra.
 - `?malware=1`: el análisis de mods encuentra malware.
 - `?modfail=1`: el asistente no consigue instalar el segundo mod elegido.
-- `?crash=1`: «Aventura con mods» no arrancó y el panel dice qué mods quitar.
+- `?crash=1`: «Aventura con mods» no arrancó: el panel dice qué mod quitar y
+  cuál falta (al segundo y medio aparece dónde descargarlo).
+- `?crash=lost`: igual, pero no se encuentra dónde descargar el que falta.
+- `?crash=memory`: «Aventura con mods» se quedó sin memoria.
 - `?nocf=1`: sin clave de CurseForge, el buscador solo usa Modrinth.
 
 Se pueden combinar: `http://localhost:1420/?state=running&lang=de&update=1`.

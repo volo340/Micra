@@ -114,6 +114,8 @@ export const api = {
     invoke<ContentPage>("search_mods", { id, query, cursor }),
   installMod: (id: string, source: SearchSource, projectId: string, versionId: string | null = null) =>
     invoke<string[]>("install_mod", { id, source, projectId, versionId }),
+  /** Instala un mod que faltaba en el último arranque (el que se encontró para él). */
+  installMissingMod: (id: string, modId: string) => invoke<string[]>("install_missing_mod", { id, modId }),
   scanMods: (id: string) => invoke<ScanReport>("scan_mods", { id }),
   quarantineMod: (id: string, path: string) => invoke<void>("quarantine_mod", { id, path }),
   checkPackUpdate: (id: string) => invoke<PackUpdate | null>("check_pack_update", { id }),

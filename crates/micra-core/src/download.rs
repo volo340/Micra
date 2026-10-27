@@ -67,8 +67,11 @@ impl Hasher {
 /// Descarga `url` a `dest` en streaming, verificando el hash si se indica.
 ///
 /// Escribe primero en `<dest>.part` y solo renombra al final, así un corte
-/// de red nunca deja un archivo a medias con el nombre definitivo.
-/// Si `dest` ya existe y su hash coincide, no se vuelve a descargar.
+/// de red nunca deja un archivo a medias con el nombre definitivo (y el
+/// renombrado sustituye un enlace en `dest` sin seguirlo). Si `dest` ya
+/// existe y su hash coincide, no se vuelve a descargar. Quien descargue
+/// dentro de la carpeta de un servidor comprueba antes las carpetas con
+/// `fsutil::check_no_links`.
 pub async fn download_file(
     client: &reqwest::Client,
     url: &str,
@@ -87,7 +90,10 @@ pub async fn download_request(
     progress: Option<Progress<'_>>,
 ) -> Result<()> {
     if let Some(expected) = expected {
-        if dest.exists() && hash_file(dest, expected.algo).await? == expected.hex {
+        let is_file = tokio::fs::symlink_metadata(dest)
+            .await
+            .is_ok_and(|m| m.is_file());
+        if is_file && hash_file(dest, expected.algo).await? == expected.hex {
             return Ok(());
         }
     }
@@ -98,7 +104,14 @@ pub async fn download_request(
     let tmp = part_path(dest);
     let response = request.send().await?.error_for_status()?;
     let total = response.content_length();
-    let mut file = tokio::fs::File::create(&tmp).await?;
+    // Archivo nuevo, nunca uno que ya exista ni un enlace que alguien haya
+    // dejado con ese nombre.
+    crate::fsutil::remove_entry(&tmp)?;
+    let mut file = tokio::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&tmp)
+        .await?;
     let mut hasher = expected.map(|e| Hasher::new(e.algo));
     let mut downloaded = 0u64;
     let mut stream = response.bytes_stream();

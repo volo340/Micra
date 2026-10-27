@@ -21,8 +21,10 @@
 set -euo pipefail
 
 REPO="volo340/Micra"
-# Al publicar una versión, el flujo de GitHub Actions fija aquí su etiqueta.
+# Al publicar una versión, el flujo de GitHub Actions fija aquí su etiqueta y
+# la huella SHA-256 de cada paquete ("huella  nombre", una por línea).
 DEFAULT_VERSION="latest"
+PACKAGE_SHA256=""
 MICRA_VERSION="${MICRA_VERSION:-$DEFAULT_VERSION}"
 API_BASE="${MICRA_API_BASE:-https://api.github.com}"
 
@@ -59,13 +61,68 @@ can_root() { [ "$(id -u)" -eq 0 ] || [ -n "$SUDO" ]; }
 
 fetch() { # fetch URL DESTINO [ACCEPT]
   local url=$1 dest=$2 accept=${3:-application/octet-stream}
+  # Solo HTTPS, también en las redirecciones (GitHub redirige a su CDN).
+  case $url in
+    https://*) ;;
+    *) die "dirección no segura, no descargo: $url" ;;
+  esac
   if have curl; then
-    curl -fL --retry 3 --progress-bar -H "Accept: $accept" -o "$dest" "$url"
+    curl -fL --proto '=https' --proto-redir '=https' --tlsv1.2 --retry 3 \
+      --progress-bar -H "Accept: $accept" -o "$dest" "$url"
   elif have wget; then
-    wget -q --show-progress --header="Accept: $accept" -O "$dest" "$url"
+    local https_only=()
+    if wget --help 2>&1 | grep -q -- '--https-only'; then https_only=(--https-only); fi
+    wget -q --show-progress ${https_only[@]+"${https_only[@]}"} --header="Accept: $accept" -O "$dest" "$url"
   else
     die "necesitas curl o wget para descargar Micra"
   fi
+}
+
+# expected_sha256 NOMBRE [api]: huella con la que se publicó ese paquete. Primero
+# la que lleva este script; con «api», si no la lleva, la que calculó GitHub al
+# subirlo.
+expected_sha256() {
+  local name=$1 sum
+  sum=$(printf '%s\n' "$PACKAGE_SHA256" |
+    awk -v n="$name" '$2 == n || $2 == "*" n { print $1; exit }')
+  if [ -z "$sum" ] && [ "${2:-}" = api ] && [ -f "$TMP/release.json" ] && have python3; then
+    sum=$(python3 -I -c '
+import json, sys
+with open(sys.argv[1], encoding="utf-8") as f:
+    release = json.load(f)
+for asset in release.get("assets") or []:
+    digest = asset.get("digest") or ""
+    if asset.get("name") == sys.argv[2] and digest.startswith("sha256:"):
+        print(digest[len("sha256:"):])
+        break
+' "$TMP/release.json" "$name" 2>/dev/null || true)
+  fi
+  case $sum in
+    "" | *[!0-9a-fA-F]*) ;;
+    *) if [ ${#sum} -eq 64 ]; then printf '%s\n' "$sum" | tr 'A-F' 'a-f'; fi ;;
+  esac
+}
+
+# check_sha256 ARCHIVO NOMBRE [api]: para la instalación si el paquete no es
+# exactamente el publicado (descarga dañada o alterada).
+check_sha256() {
+  local file=$1 name=$2 expected actual
+  expected=$(expected_sha256 "$name" "${3:-}")
+  if [ -z "$expected" ]; then
+    if [ "${3:-}" = api ]; then
+      warn "no hay huella publicada de $name; no puedo comprobar que la descarga esté intacta"
+    fi
+    return 0
+  fi
+  if ! have sha256sum; then
+    warn "falta sha256sum; no puedo comprobar que $name esté intacto"
+    return 0
+  fi
+  actual=$(sha256sum "$file" | cut -d ' ' -f 1)
+  if [ "$actual" != "$expected" ]; then
+    die"$name no coincide con el paquete publicado (puede estar dañado o alterado), así que no lo instalo. Vuelve a descargarlo de https://github.com/$REPO/releases"
+  fi
+  say "$name comprobado (SHA-256)."
 }
 
 detect_arch() {
@@ -95,9 +152,11 @@ load_assets() {
   if ! fetch "$url" "$TMP/release.json" application/vnd.github+json 2>/dev/null; then
     die "no pude consultar las versiones de Micra en GitHub. Si el repositorio es privado, descarga los instaladores a mano y ejecuta este script en la misma carpeta."
   fi
-  # Sin depender de jq: una clave por línea y nos quedamos con las URLs.
+  # Sin depender de jq: una clave por línea y nos quedamos con las URLs, solo
+  # las de las versiones de este repositorio.
   ASSETS=$(tr ',' '\n' <"$TMP/release.json" |
-    sed -n 's/.*"browser_download_url"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
+    sed -n 's/.*"browser_download_url"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' |
+    awk -v p="https://github.com/$REPO/releases/download/" 'index($0, p) == 1')
   ASSETS_LOADED=1
 }
 
@@ -111,6 +170,8 @@ obtain() {
       grep -E "$pattern" | sort -V | tail -n 1 || true)
     if [ -n "$ASSET_FILE" ]; then
       say "Usando $(basename "$ASSET_FILE")"
+      # Si es uno de los paquetes de esta versión, se comprueba que esté intacto.
+      check_sha256 "$ASSET_FILE" "$(basename "$ASSET_FILE")"
       return 0
     fi
   fi
@@ -120,6 +181,7 @@ obtain() {
   ASSET_FILE="$TMP/$(basename "$url")"
   say "Descargando $(basename "$url")..."
   fetch "$url" "$ASSET_FILE" || return 1
+  check_sha256 "$ASSET_FILE" "$(basename "$url")" api
 }
 
 # --- Instalación -------------------------------------------------------------

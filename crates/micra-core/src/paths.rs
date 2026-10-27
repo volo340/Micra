@@ -19,7 +19,24 @@ impl AppPaths {
         let dirs = ProjectDirs::from("dev", "Micra", "Micra").ok_or_else(|| {
             Error::NotFound(tr!("directorio de datos del usuario", "user data folder"))
         })?;
-        Ok(Self::new(dirs.data_dir()))
+        let paths = Self::new(dirs.data_dir());
+        paths.make_private();
+        Ok(paths)
+    }
+
+    /// En Linux, solo el usuario puede entrar en la carpeta de datos (mundos,
+    /// ajustes, secretos de respaldo): otras cuentas del equipo no. En
+    /// Windows, `%APPDATA%` ya es privada.
+    fn make_private(&self) {
+        let made = std::fs::create_dir_all(&self.root);
+        #[cfg(unix)]
+        let made = made.and_then(|()| {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&self.root, std::fs::Permissions::from_mode(0o700))
+        });
+        if let Err(e) = made {
+            tracing::warn!("no se pudo preparar la carpeta de datos privada: {e}");
+        }
     }
 
     pub fn new(root: impl Into<PathBuf>) -> Self {

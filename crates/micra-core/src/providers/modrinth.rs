@@ -107,6 +107,9 @@ pub struct Project {
     pub icon_url: Option<String>,
     #[serde(default)]
     pub server_side: String,
+    /// mod, modpack, resourcepack...
+    #[serde(default)]
+    pub project_type: String,
 }
 
 impl Version {
@@ -251,6 +254,19 @@ impl ModrinthClient {
             .error_for_status()?
             .json()
             .await?)
+    }
+
+    /// Un proyecto por su id o su slug; `None` si no existe.
+    pub async fn project(&self, id_or_slug: &str) -> Result<Option<Project>> {
+        let res = self
+            .http
+            .get(format!("{API}/project/{id_or_slug}"))
+            .send()
+            .await?;
+        if res.status() == reqwest::StatusCode::NOT_FOUND {
+            return Ok(None);
+        }
+        Ok(Some(res.error_for_status()?.json().await?))
     }
 
     pub async fn version(&self, version_id: &str) -> Result<Version> {

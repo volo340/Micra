@@ -12,7 +12,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use serde::{Deserialize, Serialize};
 
-use crate::fsutil::write_atomic_sync;
+use crate::fsutil::write_private_sync;
 use crate::{Error, Result};
 
 const SERVICE: &str = "io.github.volo340.micra";
@@ -147,23 +147,10 @@ impl SecretStore {
             let _ = std::fs::remove_file(&self.file);
             return Ok(());
         }
-        write_atomic_sync(&self.file, &serde_json::to_vec_pretty(map)?)?;
-        restrict_to_owner(&self.file)
+        // Solo el usuario puede leerlo, desde que se crea (en Windows la
+        // carpeta de datos ya es privada del usuario).
+        write_private_sync(&self.file, &serde_json::to_vec_pretty(map)?)
     }
-}
-
-/// Solo el usuario puede leer el archivo (en Windows la carpeta de datos ya
-/// es privada del usuario).
-#[cfg(unix)]
-fn restrict_to_owner(path: &std::path::Path) -> Result<()> {
-    use std::os::unix::fs::PermissionsExt;
-    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
-    Ok(())
-}
-
-#[cfg(not(unix))]
-fn restrict_to_owner(_path: &std::path::Path) -> Result<()> {
-    Ok(())
 }
 
 async fn blocking<T: Send + 'static>(f: impl FnOnce() -> Result<T> + Send + 'static) -> Result<T> {

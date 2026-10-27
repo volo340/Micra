@@ -212,35 +212,76 @@ export const de: Dict = {
   crash: {
     titleStart: "Der Server konnte nicht starten",
     titleStopped: "Der Server wurde mit einem Fehler beendet",
-    intro: "Micra hat den Fehler geprüft: Entferne diese Mods und starte den Server erneut.",
-    introSuspected:
-      "Micra hat den Fehler geprüft und diese Mods tauchen darin auf: Einer davon könnte die Ursache sein.",
-    introExtra:
-      "Der Fehler verrät nicht, welcher Mod schuld ist, aber diese funktionieren nur im Spiel und sind auf dem Server überflüssig. Entferne sie und versuch es noch einmal.",
+    intro: "Micra hat den Fehler gelesen. Das ist zu tun, damit er wieder läuft:",
+    introUnsure:
+      "Micra ist sich nicht sicher, welcher Mod schuld ist. Diese tauchen im Fehler auf: Entferne sie einzeln und probiere es jedes Mal aus.",
     introUnknown: "Micra hat nicht gefunden, welcher Mod schuld ist. Sieh in der Konsole oder im Absturzbericht nach.",
-    suspected: "Tauchen auch im Fehler auf",
-    extra: "Auf dem Server überflüssig",
-    reasons: {
-      clientOnly: "Funktioniert nur im Spiel, nicht auf einem Server",
-      missingDependency: (dep: string) => `Braucht „${dep}“, das nicht installiert ist`,
-      wrongVersion: (needs: string) => `Ist für eine andere Version (braucht ${needs})`,
-      wrongLoader: (loader: string) => `Ist ein ${loader}-Mod: Auf diesem Server funktioniert er nicht`,
-      incompatible: (other: string) => `Ist nicht mit „${other}“ kompatibel`,
-      duplicate: "Ist doppelt installiert",
-      failed: "Hat beim Laden einen Fehler verursacht",
-      suspected: "Taucht im Fehler auf",
+    causes: {
+      outOfMemory:
+        "Dem Server ist der Arbeitsspeicher (RAM) ausgegangen. Gib ihm in den Servereinstellungen mehr oder entferne einen speicherhungrigen Mod.",
+      portInUse: (port: number) =>
+        `Ein anderes Programm nutzt bereits Port ${port} (läuft noch ein anderer Server?). Schließe es oder ändere den Port in den Servereinstellungen.`,
+      watchdog:
+        "Der Server ist hängen geblieben: Ein Tick hat so lange gedauert, dass Minecraft ihn beendet hat. Meist liegt das an einem Mod oder an einer sehr großen Farm.",
     },
-    missing: (n: number, list: string) =>
-      n === 1
-        ? `Der Mod „${list}“ fehlt: Du kannst ihn im Tab „Mods“ installieren.`
-        : `Diese Mods fehlen: ${list}. Du kannst sie im Tab „Mods“ installieren.`,
-    toMods: "Zu den Mods",
+    toSettings: "Zu den Einstellungen",
+    groups: {
+      missing: "Muss installiert werden",
+      certain: "Muss entfernt werden",
+      likely: "Wahrscheinliche Ursache",
+      possible: "Tauchen auch im Fehler auf (vielleicht nicht die Ursache)",
+    },
+    reasons: {
+      clientOnly: "Funktioniert nur im Spiel (Client), nicht auf einem Server.",
+      wrongLoader: (loader: string) => `Ist ein Mod für ${loader}: Auf diesem Server funktioniert er nicht.`,
+      gameVersion: (needs: string | null) =>
+        needs ? `Ist für eine andere Minecraft-Version (braucht ${needs}).` : "Ist für eine andere Minecraft-Version.",
+      loaderVersion: (loader: string, needs: string | null) =>
+        needs ? `Braucht ${loader} ${needs}.` : `Braucht eine andere Version von ${loader}.`,
+      javaVersion: (needs: string) => `Braucht Java ${needs}: Er ist für eine neuere Minecraft-Version.`,
+      dependencyVersion: (dep: string, needs: string | null) =>
+        needs
+          ? `Braucht ${dep} ${needs}, und die installierte Version passt nicht.`
+          : `Funktioniert nicht mit deiner Version von ${dep}.`,
+      missingDependency: (dep: string) => `Ihm fehlt etwas, das nicht installiert ist (${dep}).`,
+      incompatible: (other: string) => `Ist nicht mit ${other} kompatibel.`,
+      duplicate: "Ist doppelt installiert: Die neueste Version bleibt.",
+      mixinFailed:
+        "Konnte das Spiel nicht verändern: Meist ist er für eine andere Minecraft-Version oder verträgt sich nicht mit einem anderen Mod.",
+      failed: "Hat beim Laden einen Fehler verursacht.",
+      errorInCode: "Der Fehler ist in diesem Mod passiert.",
+      suspected: "Taucht im Fehler auf.",
+    },
+    why: "Warum",
+    neededBy: (list: string) => `Wird gebraucht von ${list}`,
+    searching: "Suche nach einem Download…",
+    notFound:
+      "Micra findet ihn nicht für diese Serverversion: Such selbst danach oder entferne den Mod, der ihn braucht.",
+    install: "Installieren",
+    installing: "Wird installiert…",
+    search: "Suchen",
+    removeRequester: (name: string) => `${name} entfernen`,
     details: "Fehler anzeigen",
     openReport: "Bericht öffnen",
-    removeAndStart: (n: number) => (n === 1 ? "Mod entfernen und starten" : `${n} Mods entfernen und starten`),
+    fix: (remove: number, install: number) =>
+      remove && install
+        ? "Reparieren und starten"
+        : install
+          ? install === 1
+            ? "Installieren und starten"
+            : `${install} Mods installieren und starten`
+          : remove === 1
+            ? "Mod entfernen und starten"
+            : `${remove} Mods entfernen und starten`,
+    fixing: "Wird repariert…",
     removing: "Wird entfernt…",
-    fixedTitle: "Mods entfernt",
-    fixed: (list: string) => `Du hast ${list} entfernt. Du kannst den Server jetzt wieder starten.`,
+    fixedTitle: "Erledigt",
+    fixed: (removed: string, installed: string) =>
+      (removed && installed
+        ? `Du hast ${removed} entfernt und ${installed} installiert.`
+        : removed
+          ? `Du hast ${removed} entfernt.`
+          : `Du hast ${installed} installiert.`) + " Du kannst den Server jetzt wieder starten.",
   },
 
   players: {
@@ -469,13 +510,14 @@ export const de: Dict = {
     perIpHint: "Höchstens so viele Spieler gleichzeitig von derselben Internet-IP. 0 heißt ohne Limit.",
     sandbox: "Mit minimalen Rechten ausführen",
     sandboxHintLinux:
-      "Mit Landlock darf der Server nur in seinen eigenen Ordner schreiben: Ein bösartiger Mod kann den Rest deines Computers nicht anfassen.",
+      "Der Server darf nur in seinen eigenen Ordner schreiben, deine persönlichen Dateien nicht lesen (Landlock) und sich nicht mit deiner Desktop-Sitzung verbinden, etwa mit dem Schlüsselbund oder deinen Fenstern (seccomp): Ein bösartiger Mod kommt nicht an deine Dateien und Programme heran.",
     sandboxHintWindows:
       "Der Server läuft in einem eingeschränkten Windows-Job, ohne eigene Konsole, und wird immer mit Micra beendet.",
     lowIntegrity: "Niedrige Integrität (experimentell)",
     lowIntegrityHint:
       "Windows verhindert zusätzlich, dass er außerhalb seines Ordners schreibt. Manche Modpacks funktionieren so nicht.",
-    sandboxLandlock: (abi: number) => `Aktuell: aktiv (Landlock v${abi}).`,
+    sandboxLandlock: (abi: number, seccomp: boolean) =>
+      `Aktuell: aktiv (Landlock v${abi}${seccomp ? " + seccomp" : ""}).`,
     sandboxJob: "Aktuell: aktiv (Windows-Job).",
     sandboxJobLow: "Aktuell: aktiv (Windows-Job mit niedriger Integrität).",
     sandboxUnavailable: (reason: string) => `Aktuell: nicht verfügbar (${reason}).`,

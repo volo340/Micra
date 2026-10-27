@@ -202,34 +202,75 @@ export const es = {
   crash: {
     titleStart: "El servidor no ha podido arrancar",
     titleStopped: "El servidor se ha detenido por un error",
-    intro: "Micra ha revisado el error: quita estos mods y vuelve a encenderlo.",
-    introSuspected: "Micra ha revisado el error y estos mods aparecen en él: alguno puede ser la causa.",
-    introExtra:
-      "El error no dice qué mod lo causa, pero estos solo funcionan en el juego y sobran en el servidor. Quítalos y vuelve a probar.",
+    intro: "Micra ha leído el error. Esto es lo que hay que hacer para que vuelva a funcionar:",
+    introUnsure:
+      "Micra no está seguro de qué mod lo causa. Estos aparecen en el error: prueba a quitarlos de uno en uno.",
     introUnknown: "Micra no ha encontrado qué mod lo causa. Mira la consola o el informe del error.",
-    suspected: "También aparecen en el error",
-    extra: "Sobran en el servidor",
-    reasons: {
-      clientOnly: "Solo funciona en el juego, no en un servidor",
-      missingDependency: (dep: string) => `Necesita «${dep}», que no está instalado`,
-      wrongVersion: (needs: string) => `Es para otra versión (pide ${needs})`,
-      wrongLoader: (loader: string) => `Es un mod de ${loader}: no vale para este servidor`,
-      incompatible: (other: string) => `No es compatible con «${other}»`,
-      duplicate: "Está instalado dos veces",
-      failed: "Ha dado un error al cargar",
-      suspected: "Aparece en el error",
+    causes: {
+      outOfMemory:
+        "Al servidor le ha faltado memoria (RAM). Dale más en los ajustes del servidor o quita algún mod que pese mucho.",
+      portInUse: (port: number) =>
+        `Otro programa ya está usando el puerto ${port} (¿hay otro servidor abierto?). Ciérralo o cambia el puerto en los ajustes del servidor.`,
+      watchdog:
+        "El servidor se ha quedado colgado: una vuelta ha tardado tanto que Minecraft lo ha parado. Suele ser culpa de un mod o de una granja muy grande.",
     },
-    missing: (n: number, list: string) =>
-      n === 1
-        ? `Falta el mod «${list}»: puedes instalarlo desde la pestaña Mods.`
-        : `Faltan estos mods: ${list}. Puedes instalarlos desde la pestaña Mods.`,
-    toMods: "Ir a Mods",
+    toSettings: "Ir a Ajustes",
+    groups: {
+      missing: "Falta instalar",
+      certain: "Hay que quitar",
+      likely: "Causa probable",
+      possible: "También aparecen en el error (puede que no sean la causa)",
+    },
+    reasons: {
+      clientOnly: "Solo funciona en el juego (cliente), no en un servidor.",
+      wrongLoader: (loader: string) => `Es un mod para ${loader}: no vale para este servidor.`,
+      gameVersion: (needs: string | null) =>
+        needs ? `Es para otra versión de Minecraft (pide ${needs}).` : "Es para otra versión de Minecraft.",
+      loaderVersion: (loader: string, needs: string | null) =>
+        needs ? `Necesita ${loader} ${needs}.` : `Necesita otra versión de ${loader}.`,
+      javaVersion: (needs: string) => `Necesita Java ${needs}: es para una versión más nueva de Minecraft.`,
+      dependencyVersion: (dep: string, needs: string | null) =>
+        needs
+          ? `Necesita ${dep} ${needs} y la versión que tienes no vale.`
+          : `No funciona con la versión de ${dep} que tienes.`,
+      missingDependency: (dep: string) => `Le falta algo que no está instalado (${dep}).`,
+      incompatible: (other: string) => `No es compatible con ${other}.`,
+      duplicate: "Está instalado dos veces: se queda la versión más nueva.",
+      mixinFailed:
+        "No ha podido modificar el juego: suele pasar si es para otra versión de Minecraft o si choca con otro mod.",
+      failed: "Ha dado un error al cargar.",
+      errorInCode: "El error ha ocurrido dentro de este mod.",
+      suspected: "Aparece en el error.",
+    },
+    why: "Por qué",
+    neededBy: (list: string) => `Lo necesita ${list}`,
+    searching: "Buscando dónde descargarlo…",
+    notFound: "Micra no lo encuentra para esta versión del servidor: búscalo tú o quita el mod que lo pide.",
+    install: "Instalar",
+    installing: "Instalando…",
+    search: "Buscar",
+    removeRequester: (name: string) => `Quitar ${name}`,
     details: "Ver el error",
     openReport: "Abrir el informe",
-    removeAndStart: (n: number) => (n === 1 ? "Quitar el mod y encender" : `Quitar los ${n} mods y encender`),
+    fix: (remove: number, install: number) =>
+      remove && install
+        ? "Arreglar y encender"
+        : install
+          ? install === 1
+            ? "Instalar y encender"
+            : `Instalar ${install} mods y encender`
+          : remove === 1
+            ? "Quitar el mod y encender"
+            : `Quitar ${remove} mods y encender`,
+    fixing: "Arreglando…",
     removing: "Quitando…",
-    fixedTitle: "Mods quitados",
-    fixed: (list: string) => `Has quitado ${list}. Ya puedes volver a encender el servidor.`,
+    fixedTitle: "Listo",
+    fixed: (removed: string, installed: string) =>
+      (removed && installed
+        ? `Has quitado ${removed} e instalado ${installed}.`
+        : removed
+          ? `Has quitado ${removed}.`
+          : `Has instalado ${installed}.`) + " Ya puedes volver a encender el servidor.",
   },
 
   players: {
@@ -455,12 +496,13 @@ export const es = {
     perIpHint: "Máximo de jugadores conectados a la vez desde una misma IP de internet. 0 es sin límite.",
     sandbox: "Ejecutar con permisos mínimos",
     sandboxHintLinux:
-      "Con Landlock, el servidor solo puede escribir en su propia carpeta: un mod malicioso no puede tocar el resto de tu equipo.",
+      "El servidor solo puede escribir en su propia carpeta, no puede leer tus archivos personales (Landlock) y no puede conectarse a tu sesión de escritorio, como el llavero o las ventanas (seccomp): un mod malicioso no llega a tus archivos ni a tus programas.",
     sandboxHintWindows:
       "El servidor corre dentro de un trabajo de Windows con límites, sin consola propia y se cierra siempre con Micra.",
     lowIntegrity: "Integridad baja (experimental)",
     lowIntegrityHint: "Windows impide además que escriba fuera de su carpeta. Algunos modpacks no funcionan así.",
-    sandboxLandlock: (abi: number) => `Ahora: activo (Landlock v${abi}).`,
+    sandboxLandlock: (abi: number, seccomp: boolean) =>
+      `Ahora: activo (Landlock v${abi}${seccomp ? " + seccomp" : ""}).`,
     sandboxJob: "Ahora: activo (trabajo de Windows).",
     sandboxJobLow: "Ahora: activo (trabajo de Windows con integridad baja).",
     sandboxUnavailable: (reason: string) => `Ahora: no disponible (${reason}).`,

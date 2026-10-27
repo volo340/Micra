@@ -230,9 +230,7 @@ pub async fn import(
                     ))
                 })?;
                 let runtime = java.ensure(java_major, None).await?;
-                let launch = loaders::run_installer(&installer, &dest, &runtime).await?;
-                let _ = tokio::fs::remove_file(&installer).await;
-                launch
+                loaders::install_bundled(http, &installer, &dest, &runtime).await?
             }
         };
         let taken: Vec<u16> = used.iter().map(|(p, _)| *p).chain([req.port]).collect();

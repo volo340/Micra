@@ -11,8 +11,13 @@
 //! - los jars anidados (jar-in-jar de Forge y Fabric), con límites para que
 //!   un ZIP malicioso no agote la memoria.
 //!
-//! Los resultados se guardan por SHA-1 en `.micra/scan-cache.json`; si cambian
-//! las reglas (`RULES_VERSION`), todo se vuelve a analizar.
+//! Se analizan todos los jars del servidor: los de `mods/` y `plugins/` con
+//! todas las reglas, y el resto (el jar de arranque, `libraries/`...) solo
+//! buscando malware conocido, porque un pack también puede esconderlo ahí.
+//!
+//! Los resultados se guardan por SHA-1 fuera de la carpeta del servidor
+//! (`servers/.configs/<id>.scan.json`), donde un mod no puede marcarse como
+//! limpio; si cambian las reglas (`RULES_VERSION`), todo se vuelve a analizar.
 
 use std::collections::HashMap;
 use std::io::{Cursor, Read, Seek};
@@ -27,8 +32,11 @@ use crate::fsutil::{walk_files, write_atomic_sync};
 use crate::{tr, Error, Result};
 
 /// Súbelo al cambiar las reglas: invalida la caché.
-const RULES_VERSION: u32 = 1;
-const CACHE_FILE: &str = ".micra/scan-cache.json";
+const RULES_VERSION: u32 = 2;
+/// Extensión de la caché en `servers/.configs`.
+pub const CACHE_EXT: &str = "scan.json";
+/// Donde estaba la caché hasta la 0.3.0 (dentro del servidor).
+const OLD_CACHE_FILE: &str = ".micra/scan-cache.json";
 pub const QUARANTINE_DIR: &str = ".micra/quarantine";
 
 /// Límites contra ZIPs maliciosos.
@@ -115,6 +123,12 @@ const RULES: &[Rule] = &[
         severity: Severity::Suspicious,
         needles: &["discord.com/api/webhooks/", "discordapp.com/api/webhooks/"],
     },
+    // Exfiltración por un bot de Telegram, típica de los ladrones de 2024-2025.
+    Rule {
+        id: "telegram-bot",
+        severity: Severity::Suspicious,
+        needles: &["api.telegram.org/bot"],
+    },
     Rule {
         id: "account-stealer",
         severity: Severity::Suspicious,
@@ -126,6 +140,19 @@ const RULES: &[Rule] = &[
             "\\default\\login data",
             "/default/login data",
             "\\google\\chrome\\user data",
+            "\\network\\cookies",
+            "/network/cookies",
+            // Prefijo de los tokens cifrados de Discord.
+            "dqw4w9wgxcq:",
+            // Cuentas de otros launchers (Lunar, TLauncher, Feather).
+            ".lunarclient/settings/game/accounts.json",
+            ".lunarclient\\settings\\game\\accounts.json",
+            "tlauncherprofiles.json",
+            "feather/accounts.json",
+            "feather\\accounts.json",
+            // Monederos de criptomonedas.
+            "exodus.wallet",
+            "nkbihfbeogaeaoehlefnkodbefgpgknn",
         ],
     },
     Rule {
@@ -135,6 +162,14 @@ const RULES: &[Rule] = &[
             "currentversion\\run",
             "start menu\\programs\\startup",
             "schtasks /create",
+            ".config/autostart/",
+            "systemctl --user enable",
+            // Descargas y ejecución de PowerShell típicas de un dropper.
+            "-encodedcommand",
+            "invoke-webrequest",
+            "downloadstring(",
+            "certutil -urlcache",
+            "bitsadmin /transfer",
         ],
     },
 ];
@@ -367,19 +402,50 @@ struct Cache {
     entries: HashMap<String, Vec<Finding>>,
 }
 
-/// Jars que se analizan: todo `mods/` (activos y desactivados) y los jars
-/// de la raíz salvo los de arranque conocidos.
+const MOD_DIRS: [&str; 2] = ["mods", "plugins"];
+
+fn is_mod_path(rel: &str) -> bool {
+    MOD_DIRS
+        .iter()
+        .any(|d| rel.strip_prefix(d).is_some_and(|r| r.starts_with('/')))
+}
+
+fn is_jar(path: &Path) -> bool {
+    let n = path.to_string_lossy().to_ascii_lowercase();
+    n.ends_with(".jar") || n.ends_with(".jar.disabled")
+}
+
+/// Jars que se analizan: todo `mods/` y `plugins/` (activos y desactivados,
+/// también si la carpeta es un enlace que puso la persona) y cualquier otro
+/// jar de la carpeta del servidor, salvo lo que guarda Micra (`.micra`: la
+/// cuarentena y las copias de los mods quitados).
 fn jars_to_scan(server_dir: &Path) -> Vec<PathBuf> {
     let mut out = Vec::new();
-    for dir in ["mods", "plugins"] {
+    for dir in MOD_DIRS {
         if let Ok(files) = walk_files(&server_dir.join(dir)) {
-            out.extend(files.into_iter().map(|(p, _)| p).filter(|p| {
-                let n = p.to_string_lossy().to_ascii_lowercase();
-                n.ends_with(".jar") || n.ends_with(".jar.disabled")
-            }));
+            out.extend(files.into_iter().map(|(p, _)| p).filter(|p| is_jar(p)));
+        }
+    }
+    if let Ok(entries) = std::fs::read_dir(server_dir) {
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            let Ok(kind) = entry.file_type() else {
+                continue;
+            };
+            if name == ".micra" || MOD_DIRS.contains(&name.as_str()) || kind.is_symlink() {
+                continue;
+            }
+            if kind.is_file() && is_jar(&entry.path()) {
+                out.push(entry.path());
+            } else if kind.is_dir() {
+                if let Ok(files) = walk_files(&entry.path()) {
+                    out.extend(files.into_iter().map(|(p, _)| p).filter(|p| is_jar(p)));
+                }
+            }
         }
     }
     out.sort();
+    out.dedup();
     out
 }
 
@@ -403,7 +469,8 @@ pub fn scan_server_sync(
     server_dir: &Path,
     progress: Option<&(dyn Fn(usize, usize) + Sync)>,
 ) -> Result<ScanReport> {
-    let cache_path = server_dir.join(CACHE_FILE);
+    let cache_path = crate::server::config::trusted_path(server_dir, CACHE_EXT);
+    let _ = std::fs::remove_file(server_dir.join(OLD_CACHE_FILE));
     let mut cache: Cache = std::fs::read(&cache_path)
         .ok()
         .and_then(|raw| serde_json::from_slice(&raw).ok())
@@ -454,11 +521,23 @@ pub fn scan_server_sync(
     };
     let mut entries = HashMap::new();
     for (path, sha1, findings) in results.into_inner().unwrap() {
-        if !findings.is_empty() {
+        let rel = relative(server_dir, &path);
+        // Fuera de mods/ y plugins/ solo cuenta el malware conocido: las
+        // librerías normales también hablan de cookies o del registro.
+        let shown: Vec<Finding> = if is_mod_path(&rel) {
+            findings.clone()
+        } else {
+            findings
+                .iter()
+                .filter(|f| f.severity == Severity::Critical)
+                .cloned()
+                .collect()
+        };
+        if !shown.is_empty() {
             report.files.push(FileReport {
-                path: relative(server_dir, &path),
+                path: rel,
                 sha1: sha1.clone(),
-                findings: findings.clone(),
+                findings: shown,
             });
         }
         entries.insert(sha1, findings);
@@ -504,19 +583,20 @@ fn relative(base: &Path, path: &Path) -> String {
 /// donde ningún loader lo carga. La ruta llega de la interfaz y se valida.
 pub async fn quarantine(server_dir: &Path, rel: &str) -> Result<()> {
     let rel_norm = rel.replace('\\', "/");
-    let allowed = (rel_norm.starts_with("mods/") || rel_norm.starts_with("plugins/"))
+    let lower = rel_norm.to_ascii_lowercase();
+    let allowed = (lower.ends_with(".jar") || lower.ends_with(".jar.disabled"))
+        && !lower.starts_with(".micra/")
         && !rel_norm.split('/').any(|p| p == ".." || p.is_empty());
     if !allowed {
         return Err(Error::UnsafePath(rel.to_string()));
     }
-    let source = crate::archive::safe_join(server_dir, &rel_norm)?;
+    let source = crate::archive::safe_join_no_links(server_dir, &rel_norm)?;
     let name = source
         .file_name()
         .ok_or_else(|| Error::UnsafePath(rel.to_string()))?
         .to_string_lossy()
         .into_owned();
-    let dir = server_dir.join(QUARANTINE_DIR);
-    tokio::fs::create_dir_all(&dir).await?;
+    let dir = crate::fsutil::internal_dir(server_dir, QUARANTINE_DIR)?;
     let stamp = chrono::Local::now().format("%Y%m%d-%H%M%S");
     // `.quarantined` para que nada lo trate como un jar.
     let target = dir.join(format!("{stamp}_{name}.quarantined"));
@@ -645,39 +725,75 @@ mod tests {
 
     #[test]
     fn clean_jar_and_cache() {
-        let server = tempfile::tempdir().unwrap();
-        let mods = server.path().join("mods");
+        let root = tempfile::tempdir().unwrap();
+        let server = root.path().join("servers").join("s");
+        let mods = server.join("mods");
         std::fs::create_dir_all(&mods).unwrap();
         let clean = class_with(&["net/minecraft/server/MinecraftServer", "Hello"], &[]);
         std::fs::write(mods.join("ok.jar"), jar(&[("a/A.class", clean)])).unwrap();
         let evil = class_with(&["http://107.189.3.101/x"], &[]);
         std::fs::write(mods.join("bad.jar.disabled"), jar(&[("b/B.class", evil)])).unwrap();
+        // Una caché antigua dentro del servidor (un mod pudo escribirla).
+        std::fs::create_dir_all(server.join(".micra")).unwrap();
+        std::fs::write(server.join(OLD_CACHE_FILE), "{}").unwrap();
 
-        let report = scan_server_sync(server.path(), None).unwrap();
+        let report = scan_server_sync(&server, None).unwrap();
         assert_eq!(report.scanned, 2);
         assert_eq!(
             report.critical_files(),
             vec!["mods/bad.jar.disabled".to_string()]
         );
-        assert!(server.path().join(CACHE_FILE).exists());
+        assert!(!server.join(OLD_CACHE_FILE).exists());
+        let cache = root.path().join("servers/.configs/s.scan.json");
+        assert!(cache.exists());
         // Segunda pasada desde la caché, mismo resultado.
-        let again = scan_server_sync(server.path(), None).unwrap();
+        let again = scan_server_sync(&server, None).unwrap();
         assert_eq!(again.critical_files(), report.critical_files());
 
         let rt = tokio::runtime::Builder::new_current_thread()
             .build()
             .unwrap();
-        rt.block_on(quarantine(server.path(), "mods/bad.jar.disabled"))
+        rt.block_on(quarantine(&server, "mods/bad.jar.disabled"))
             .unwrap();
         assert!(!mods.join("bad.jar.disabled").exists());
-        assert!(rt
-            .block_on(quarantine(server.path(), "../etc/passwd"))
-            .is_err());
-        assert!(rt
-            .block_on(quarantine(server.path(), "world/level.dat"))
-            .is_err());
-        let clean_report = scan_server_sync(server.path(), None).unwrap();
+        assert!(rt.block_on(quarantine(&server, "../etc/passwd")).is_err());
+        assert!(rt.block_on(quarantine(&server, "world/level.dat")).is_err());
+        let clean_report = scan_server_sync(&server, None).unwrap();
         assert!(!clean_report.has_critical() || !clean_report.host.is_empty());
+    }
+
+    /// Malware escondido fuera de `mods/` (el jar de arranque, `libraries/`)
+    /// también se encuentra; las sospechas de una librería normal, no.
+    #[test]
+    fn scans_jars_outside_mods() {
+        let root = tempfile::tempdir().unwrap();
+        let server = root.path().join("servers").join("s");
+        let libs = server.join("libraries/org/x");
+        std::fs::create_dir_all(&libs).unwrap();
+        let evil = class_with(&["files-8ie.pages.dev"], &[]);
+        std::fs::write(
+            server.join("fabric-server-launch.jar"),
+            jar(&[("E.class", evil)]),
+        )
+        .unwrap();
+        let chatty = class_with(&["https://discord.com/api/webhooks/1/x"], &[]);
+        std::fs::write(libs.join("lib.jar"), jar(&[("L.class", chatty)])).unwrap();
+        let report = scan_server_sync(&server, None).unwrap();
+        assert_eq!(report.scanned, 2);
+        assert_eq!(
+            report.critical_files(),
+            vec!["fabric-server-launch.jar".to_string()]
+        );
+        assert!(!report
+            .files
+            .iter()
+            .any(|f| f.path.starts_with("libraries/")));
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
+        rt.block_on(quarantine(&server, "fabric-server-launch.jar"))
+            .unwrap();
+        assert!(!server.join("fabric-server-launch.jar").exists());
     }
 
     #[test]

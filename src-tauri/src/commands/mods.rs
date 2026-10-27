@@ -8,6 +8,7 @@ use micra_core::providers::curseforge::CurseForgeClient;
 use micra_core::providers::search::{self, ContentKind, ContentPage, ContentQuery, Cursor, Source};
 use micra_core::provision::{ProvisionStep, Provisioner};
 use micra_core::server::config::ServerConfig;
+use micra_core::server::diagnose::{self, CrashReport};
 use micra_core::server::mods::{self, ModInfo, ModRemoteInfo, Sources};
 use micra_core::server::pack::{self, PackManifest, PackUpdate, UpdateTarget};
 use micra_core::server::scan::{self, ScanReport};
@@ -36,6 +37,7 @@ pub async fn list_mods(state: State<'_, Shared>, id: String) -> CmdResult<Vec<Mo
 
 #[tauri::command]
 pub async fn set_mod_enabled(
+    app: AppHandle,
     state: State<'_, Shared>,
     id: String,
     file_name: String,
@@ -43,7 +45,17 @@ pub async fn set_mod_enabled(
 ) -> CmdResult<String> {
     let dir = server_dir(&state, &id)?;
     state.ensure_stopped(&id).await?;
-    mods::set_enabled(&dir, &file_name, enabled).await
+    let renamed = mods::set_enabled(&dir, &file_name, enabled).await?;
+    // Si era uno de los que faltaban para arrancar, ya está.
+    if enabled {
+        update_crash(&app, &state, &id, |crash| {
+            crash
+                .missing
+                .retain(|m| m.disabled_file.as_deref() != Some(file_name.as_str()));
+        });
+        forget_installed(&app, &state, &id).await;
+    }
+    Ok(renamed)
 }
 
 #[tauri::command]
@@ -56,16 +68,83 @@ pub async fn remove_mod(
     let dir = server_dir(&state, &id)?;
     state.ensure_stopped(&id).await?;
     mods::remove_mod(&dir, &file_name).await?;
-    // Si era uno de los que impedían arrancar, ya no hace falta avisar de él.
-    if state.live(&id).crash.is_some() {
-        let live = state.update_live(&id, |l| {
-            if let Some(crash) = l.crash.as_mut() {
-                crash.culprits.retain(|c| c.file_name != file_name);
+    // Si era uno de los que impedían arrancar, ya no hace falta avisar de él,
+    // ni de lo que le faltaba solo a él.
+    update_crash(&app, &state, &id, |crash| {
+        crash.culprits.retain(|c| c.file_name != file_name);
+        crash.missing.retain_mut(|m| {
+            if m.disabled_file.as_deref() == Some(file_name.as_str()) {
+                m.disabled_file = None;
             }
+            let before = m.required_by.len();
+            m.required_by.retain(|r| r.file_name != file_name);
+            before == 0 || !m.required_by.is_empty()
         });
-        events::live(&app, &id, &live);
-    }
+    });
     Ok(())
+}
+
+/// Instala un mod que faltaba en el último arranque, del proyecto que se
+/// encontró para él, y deja de avisar de él.
+#[tauri::command]
+pub async fn install_missing_mod(
+    app: AppHandle,
+    state: State<'_, Shared>,
+    id: String,
+    mod_id: String,
+) -> CmdResult<Vec<String>> {
+    let found = state
+        .live(&id)
+        .crash
+        .and_then(|c| c.missing.into_iter().find(|m| m.id == mod_id))
+        .and_then(|m| m.found)
+        .ok_or_else(|| {
+            Error::NotFound(tr!(
+                "dónde descargar {mod_id}",
+                "where to download {mod_id}"
+            ))
+        })?;
+    let files = install(&state, &id, found.source, &found.project_id, None).await?;
+    update_crash(&app, &state, &id, |crash| {
+        crash.missing.retain(|m| m.id != mod_id);
+    });
+    forget_installed(&app, &state, &id).await;
+    Ok(files)
+}
+
+/// Si lo que se acaba de instalar o activar faltaba para arrancar, deja de
+/// avisar de ello.
+async fn forget_installed(app: &AppHandle, state: &Shared, id: &str) {
+    if state.live(id).crash.is_none() {
+        return;
+    }
+    let Ok(dir) = server_dir(state, id) else {
+        return;
+    };
+    let Ok(list) = mods::list_mods(&dir).await else {
+        return;
+    };
+    update_crash(app, state, id, |crash| {
+        diagnose::forget_installed(crash, &list)
+    });
+}
+
+/// Cambia el aviso de por qué falló el último arranque, si lo hay.
+fn update_crash(
+    app: &AppHandle,
+    state: &AppState,
+    id: &str,
+    change: impl FnOnce(&mut CrashReport),
+) {
+    if state.live(id).crash.is_none() {
+        return;
+    }
+    let live = state.update_live(id, |l| {
+        if let Some(crash) = l.crash.as_mut() {
+            change(crash);
+        }
+    });
+    events::live(app, id, &live);
 }
 
 /// Oculta el aviso de por qué falló el último arranque.
@@ -162,27 +241,32 @@ pub async fn search_mods(
 
 #[tauri::command]
 pub async fn install_mod(
+    app: AppHandle,
     state: State<'_, Shared>,
     id: String,
     source: Source,
     project_id: String,
     version_id: Option<String>,
 ) -> CmdResult<Vec<String>> {
-    let dir = server_dir(&state, &id)?;
-    let _busy = state.begin_busy(&id)?;
-    state.ensure_stopped(&id).await?;
+    let files = install(&state, &id, source, &project_id, version_id.as_deref()).await?;
+    forget_installed(&app, &state, &id).await;
+    Ok(files)
+}
+
+async fn install(
+    state: &Shared,
+    id: &str,
+    source: Source,
+    project_id: &str,
+    version_id: Option<&str>,
+) -> CmdResult<Vec<String>> {
+    let dir = server_dir(state, id)?;
+    let _busy = state.begin_busy(id)?;
+    state.ensure_stopped(id).await?;
     let cfg = ServerConfig::load(&dir).await?;
     let curseforge = state.curseforge().await;
-    let sources = sources(&state, curseforge.as_deref());
-    mods::install(
-        sources,
-        &dir,
-        &cfg,
-        source,
-        &project_id,
-        version_id.as_deref(),
-    )
-    .await
+    let sources = sources(state, curseforge.as_deref());
+    mods::install(sources, &dir, &cfg, source, project_id, version_id).await
 }
 
 #[tauri::command]

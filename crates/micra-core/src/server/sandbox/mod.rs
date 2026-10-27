@@ -5,9 +5,15 @@
 //!
 //! - **Linux**: [Landlock](https://docs.kernel.org/userspace-api/landlock.html)
 //!   (kernel 5.13 o posterior). El servidor solo puede escribir en su propia
-//!   carpeta y en `/tmp`, y solo puede leer su carpeta, el Java de Micra y los
-//!   archivos del sistema. Tu carpeta personal (navegadores, Discord, claves
-//!   SSH, otros servidores, los secretos de Micra) queda fuera de su alcance.
+//!   carpeta, y solo puede leer su carpeta, el Java de Micra y los archivos
+//!   del sistema. Tu carpeta personal (navegadores, Discord, claves SSH, otros
+//!   servidores, los secretos de Micra), /tmp, /run (unidades montadas,
+//!   USB) y la memoria compartida de otros programas quedan fuera de su
+//!   alcance. Con seccomp, además, no puede hablar con otros programas de la
+//!   sesión por sockets Unix (D-Bus, el escritorio, el agente SSH), ni crear
+//!   espacios de nombres, ni usar io_uring, ni espiar otros procesos; desde
+//!   Linux 6.12 tampoco puede mandarles señales. Arranca con un entorno
+//!   limpio, sin las variables de la sesión de la persona.
 //! - **Windows**: un *Job Object* que impide leer o cambiar el portapapeles,
 //!   tocar la configuración del sistema o cerrar la sesión, y que cierra el
 //!   servidor si Micra se cierra de golpe. De forma opcional (experimental),
@@ -29,8 +35,9 @@ pub mod windows;
 pub enum SandboxStatus {
     /// Desactivado en los ajustes del servidor.
     Disabled,
-    /// Linux: Landlock activo con esta versión de la ABI.
-    Landlock { abi: u32 },
+    /// Linux: Landlock activo con esta versión de la ABI y, si `seccomp`,
+    /// también el filtro de llamadas al sistema.
+    Landlock { abi: u32, seccomp: bool },
     /// Windows: Job Object; `low_integrity` si además va con integridad baja.
     #[serde(rename_all = "camelCase")]
     JobObject { low_integrity: bool },
