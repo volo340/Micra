@@ -175,9 +175,21 @@ jobs:
           path: out
           merge-multiple: true
 
-      - name: Fijar la versión en el instalador de Linux
+      # El instalador de Linux descarga los paquetes de esta versión y los
+      # compara con estas huellas antes de instalarlos.
+      - name: Fijar la versión y las huellas en el instalador de Linux
         run: |
-          sed "s/^DEFAULT_VERSION=.*/DEFAULT_VERSION=\"${GITHUB_REF_NAME}\"/" scripts/install.sh > out/micra-install.sh
+          shopt -s nullglob
+          cd out
+          packages=(*.deb *.rpm *.AppImage)
+          sums=""
+          [ ${#packages[@]} -eq 0 ] || sums=$(sha256sum -- "${packages[@]}")
+          SUMS="$sums" VERSION="$GITHUB_REF_NAME" awk '
+            /^DEFAULT_VERSION=/ { print "DEFAULT_VERSION=\"" ENVIRON["VERSION"] "\""; next }
+            /^PACKAGE_SHA256=/ { print "PACKAGE_SHA256=\"" ENVIRON["SUMS"] "\""; next }
+            { print }' ../scripts/install.sh > micra-install.sh
+          bash -n micra-install.sh
+          grep -A4 '^DEFAULT_VERSION=' micra-install.sh
 
       # Lo que lee Micra para saber si hay una versión nueva: la dirección de cada
       # paquete y su firma. Se publica junto al resto al publicar el borrador.

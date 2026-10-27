@@ -65,16 +65,16 @@ pub async fn disable(server_dir: &Path) -> Result<()> {
 /// la descarga (si la persona lo aceptó) y fija el puerto. Devuelve `true`
 /// si cambió algo (entonces hay que mandar `bluemap reload`).
 pub async fn apply_config(server_dir: &Path, cfg: &ServerConfig) -> Result<bool> {
+    let core = server_dir.join(CORE_CONF);
+    let web = server_dir.join(WEBSERVER_CONF);
+    for path in [&core, &web] {
+        crate::fsutil::check_no_links(server_dir, path)?;
+    }
     let mut changed = false;
     if cfg.map.accepted_download {
-        changed |= patch_file(&server_dir.join(CORE_CONF), "accept-download", "true").await?;
+        changed |= patch_file(&core, "accept-download", "true").await?;
     }
-    changed |= patch_file(
-        &server_dir.join(WEBSERVER_CONF),
-        "port",
-        &cfg.map.port.to_string(),
-    )
-    .await?;
+    changed |= patch_file(&web, "port", &cfg.map.port.to_string()).await?;
     Ok(changed)
 }
 
@@ -92,15 +92,21 @@ async fn patch_file(path: &Path, key: &str, value: &str) -> Result<bool> {
     Ok(true)
 }
 
+/// `true` si la línea asigna `key` (no un comentario ni otra clave que
+/// empiece igual).
+fn is_key_line(line: &str, key: &str) -> bool {
+    line.trim_start()
+        .strip_prefix(key)
+        .is_some_and(|rest| rest.trim_start().starts_with([':', '=']))
+}
+
 fn patch_hocon(content: &str, key: &str, value: &str) -> String {
     let mut found = false;
     let mut out: Vec<String> = content
         .lines()
         .map(|line| {
             let trimmed = line.trim_start();
-            let is_key = trimmed
-                .strip_prefix(key)
-                .is_some_and(|rest| rest.trim_start().starts_with([':', '=']));
+            let is_key = is_key_line(line, key);
             if is_key && !found {
                 found = true;
                 let indent = &line[..line.len() - trimmed.len()];

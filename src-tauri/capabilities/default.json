@@ -1,7 +1,17 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Permisos de la ventana principal",
+  "description": "Permisos de la ventana principal. La interfaz solo puede abrir en el navegador estas páginas; las carpetas y el resto de enlaces los abre el backend tras validarlos.",
   "windows": ["main"],
-  "permissions": ["core:default", "opener:default"]
+  "permissions": [
+    "core:default",
+    {
+      "identifier": "opener:allow-open-url",
+      "allow": [
+        { "url": "https://aka.ms/MinecraftEULA" },
+        { "url": "https://console.curseforge.com/*" },
+        { "url": "https://playit.gg/claim/*" }
+      ]
+    }
+  ]
 }

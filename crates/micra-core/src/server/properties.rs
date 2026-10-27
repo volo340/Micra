@@ -31,13 +31,25 @@ pub fn read_properties_sync(server_dir: &Path) -> BTreeMap<String, String> {
 }
 
 /// Nombre de la carpeta del mundo (`level-name`, por defecto `world`).
+/// Si apunta fuera de la carpeta del servidor (`../`, una ruta absoluta o
+/// una unidad de Windows), cuenta como `world`: Micra nunca escribe, copia
+/// ni restaura un mundo de fuera.
 pub fn level_name(props: &BTreeMap<String, String>) -> String {
     props
         .get("level-name")
         .map(|s| s.trim())
-        .filter(|s| !s.is_empty())
+        .filter(|s| is_safe_level_name(s))
         .unwrap_or("world")
         .to_string()
+}
+
+pub fn is_safe_level_name(name: &str) -> bool {
+    !name.is_empty()
+        && !name.contains(':')
+        && !name.starts_with(['/', '\\'])
+        && name
+            .split(['/', '\\'])
+            .all(|part| !part.is_empty() && part != "." && part != "..")
 }
 
 /// Valor booleano con el mismo criterio que Minecraft (solo "true" es cierto).
@@ -183,6 +195,8 @@ enum Kind {
     Int(i64, i64),
     Choice(&'static [&'static str]),
     Text(usize),
+    /// Carpeta del mundo dentro de la del servidor.
+    Level,
 }
 
 fn kind_of(key: &str) -> Option<Kind> {
@@ -217,6 +231,7 @@ fn kind_of(key: &str) -> Option<Kind> {
         | "enable-command-block"
         | "enable-rcon"
         | "enable-query"
+        | "management-server-enabled"
         | "enable-status"
         | "hide-online-players"
         | "enforce-secure-profile"
@@ -242,7 +257,7 @@ fn kind_of(key: &str) -> Option<Kind> {
         "entity-broadcast-range-percentage" => Int(10, 1000),
         "motd" => Text(150),
         "level-seed" => Text(100),
-        "level-name" => Text(80),
+        "level-name" => Level,
         "resource-pack" | "resource-pack-prompt" => Text(500),
         "resource-pack-sha1" => Text(40),
         "server-ip" => Text(64),
@@ -292,6 +307,12 @@ pub fn validate(key: &str, value: &str) -> Result<()> {
             "«{key}» admite como mucho {max} caracteres",
             "\"{key}\" allows at most {max} characters"
         ))),
+        Some(Kind::Level) if value.chars().count() > 80 || !is_safe_level_name(value.trim()) => {
+            Err(Error::InvalidConfig(tr!(
+                "«{key}» tiene que ser el nombre de una carpeta dentro del servidor",
+                "\"{key}\" must be the name of a folder inside the server"
+            )))
+        }
         _ => Ok(()),
     }
 }
@@ -397,5 +418,22 @@ mod tests {
         assert!(flag(&props, "online-mode", false));
         assert!(!flag(&props, "pvp", false));
         assert_eq!(level_name(&BTreeMap::new()), "world");
+        // Un pack no puede poner el mundo fuera del servidor.
+        for bad in [
+            "../../.config",
+            "/etc",
+            "C:\\Users\\x",
+            "mundos/../..",
+            "\\\\pc\\x",
+        ] {
+            let props = parse(&format!("level-name={bad}\n"));
+            assert_eq!(level_name(&props), "world", "{bad}");
+            assert!(validate("level-name", bad).is_err(), "{bad}");
+        }
+        assert_eq!(
+            level_name(&parse("level-name=mundos/survival\n")),
+            "mundos/survival"
+        );
+        assert!(validate("level-name", "Mi mundo").is_ok());
     }
 }

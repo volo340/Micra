@@ -8,6 +8,32 @@ use crate::{tr, Error, Result};
 
 pub const CONFIG_FILE: &str = "micra.json";
 
+/// Carpeta, junto a las de los servidores, con la configuración que Micra
+/// usa de verdad (`servers/.configs/<id>.json`). El servidor aislado puede
+/// escribir en su propia carpeta, así que un mod podría editar su
+/// `micra.json` (apagar el aislamiento, cambiar las copias...); aquí no llega.
+pub const TRUSTED_DIR: &str = ".configs";
+
+fn trusted_file(server_dir: &Path) -> PathBuf {
+    trusted_path(server_dir, "json")
+}
+
+/// Archivo de confianza de un servidor, fuera de su carpeta
+/// (`servers/.configs/<id>.<ext>`).
+pub fn trusted_path(server_dir: &Path, ext: &str) -> PathBuf {
+    let parent = server_dir.parent().unwrap_or(server_dir);
+    parent
+        .join(TRUSTED_DIR)
+        .join(format!("{}.{ext}", dir_id(server_dir)))
+}
+
+fn dir_id(server_dir: &Path) -> String {
+    server_dir
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default()
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum Loader {
@@ -271,17 +297,58 @@ impl ServerConfig {
         )
     }
 
+    /// Lee la configuración de su copia de confianza. Un servidor de una
+    /// versión anterior de Micra solo tiene `micra.json`: se adopta una vez,
+    /// con el aislamiento encendido, porque un mod pudo apagarlo editándolo.
     pub async fn load(server_dir: &Path) -> Result<Self> {
-        let raw = tokio::fs::read(server_dir.join(CONFIG_FILE)).await?;
-        Ok(serde_json::from_slice(&raw)?)
+        let trusted = trusted_file(server_dir);
+        let mut cfg: Self = match tokio::fs::read(&trusted).await {
+            Ok(raw) => serde_json::from_slice(&raw)?,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                let raw = tokio::fs::read(server_dir.join(CONFIG_FILE)).await?;
+                let mut cfg: Self = serde_json::from_slice(&raw)?;
+                cfg.security.sandbox = true;
+                cfg.id = dir_id(server_dir);
+                cfg.save(server_dir).await?;
+                cfg
+            }
+            Err(e) => return Err(e.into()),
+        };
+        // El identificador es el nombre de la carpeta, diga lo que diga el
+        // archivo: las copias y el borrado de otro servidor dependen de él.
+        cfg.id = dir_id(server_dir);
+        Ok(cfg)
     }
 
+    /// Como `load`, sin adoptar `micra.json` (para recorrer los servidores
+    /// desde código síncrono).
+    pub fn load_sync(server_dir: &Path) -> Option<Self> {
+        let raw = std::fs::read(trusted_file(server_dir))
+            .or_else(|_| std::fs::read(server_dir.join(CONFIG_FILE)))
+            .ok()?;
+        let mut cfg: Self = serde_json::from_slice(&raw).ok()?;
+        cfg.id = dir_id(server_dir);
+        Some(cfg)
+    }
+
+    /// Guarda la copia de confianza y, para quien abra la carpeta, una copia
+    /// en `micra.json` que Micra ya no vuelve a leer.
     pub async fn save(&self, server_dir: &Path) -> Result<()> {
-        write_atomic(
-            &server_dir.join(CONFIG_FILE),
-            &serde_json::to_vec_pretty(self)?,
-        )
-        .await
+        let json = serde_json::to_vec_pretty(self)?;
+        write_atomic(&trusted_file(server_dir), &json).await?;
+        write_atomic(&server_dir.join(CONFIG_FILE), &json).await
+    }
+
+    /// Borra lo que Micra guarda del servidor fuera de su carpeta (al
+    /// borrarlo): la configuración y la caché del escáner.
+    pub async fn forget(server_dir: &Path) -> Result<()> {
+        for ext in ["json", crate::server::scan::CACHE_EXT] {
+            match tokio::fs::remove_file(trusted_path(server_dir, ext)).await {
+                Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(e.into()),
+                _ => {}
+            }
+        }
+        Ok(())
     }
 
     /// Comprueba las políticas que la persona puede editar en Ajustes.
@@ -472,6 +539,51 @@ mod tests {
         assert_eq!(cfg.map.port, 8100);
         assert_eq!(cfg.source, None);
         assert_eq!(cfg.world, WorldTweaks::default());
+    }
+
+    /// Un mod puede reescribir `micra.json` (está en la carpeta del
+    /// servidor), pero Micra lee la copia de fuera.
+    #[tokio::test]
+    async fn a_mod_cannot_change_the_config() {
+        let root = tempfile::tempdir().unwrap();
+        let dir = root.path().join("servers").join("survival");
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut mine = sample();
+        mine.security.sandbox = false;
+        mine.save(&dir).await.unwrap();
+
+        let mut evil = sample();
+        evil.id = "otro".into();
+        evil.backups.keep = 1;
+        evil.extra_jvm_args = vec!["-javaagent:x.jar".into()];
+        let evil = serde_json::to_vec(&evil).unwrap();
+        std::fs::write(dir.join(CONFIG_FILE), &evil).unwrap();
+        let loaded = ServerConfig::load(&dir).await.unwrap();
+        assert_eq!(loaded.id, "survival");
+        assert_eq!(loaded.backups.keep, 10);
+        assert!(loaded.extra_jvm_args.is_empty());
+        // Lo que eligió la persona se mantiene.
+        assert!(!loaded.security.sandbox);
+        assert_eq!(ServerConfig::load_sync(&dir).unwrap().backups.keep, 10);
+
+        // Un servidor de la 0.3.0 solo tiene micra.json: se adopta una vez,
+        // con el aislamiento encendido.
+        let old = root.path().join("servers").join("viejo");
+        std::fs::create_dir_all(&old).unwrap();
+        let mut off = sample();
+        off.security.sandbox = false;
+        std::fs::write(old.join(CONFIG_FILE), serde_json::to_vec(&off).unwrap()).unwrap();
+        let adopted = ServerConfig::load(&old).await.unwrap();
+        assert_eq!(adopted.id, "viejo");
+        assert!(adopted.security.sandbox);
+        let trusted = root
+            .path()
+            .join("servers")
+            .join(TRUSTED_DIR)
+            .join("viejo.json");
+        assert!(trusted.exists());
+        ServerConfig::forget(&old).await.unwrap();
+        assert!(!trusted.exists());
     }
 
     #[test]

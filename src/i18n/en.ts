@@ -203,34 +203,73 @@ export const en: Dict = {
   crash: {
     titleStart: "The server couldn't start",
     titleStopped: "The server stopped with an error",
-    intro: "Micra checked the error: remove these mods and start the server again.",
-    introSuspected: "Micra checked the error and these mods appear in it: one of them may be the cause.",
-    introExtra:
-      "The error doesn't say which mod caused it, but these only work in the game and aren't needed on the server. Remove them and try again.",
+    intro: "Micra read the error. This is what it takes to get it working again:",
+    introUnsure: "Micra isn't sure which mod caused it. These appear in the error: try removing them one at a time.",
     introUnknown: "Micra couldn't find which mod caused it. Check the console or the crash report.",
-    suspected: "Also in the error",
-    extra: "Not needed on the server",
-    reasons: {
-      clientOnly: "Only works in the game, not on a server",
-      missingDependency: (dep: string) => `Needs “${dep}”, which isn't installed`,
-      wrongVersion: (needs: string) => `Made for another version (needs ${needs})`,
-      wrongLoader: (loader: string) => `It's a ${loader} mod: it doesn't work on this server`,
-      incompatible: (other: string) => `Not compatible with “${other}”`,
-      duplicate: "Installed twice",
-      failed: "Failed to load",
-      suspected: "Appears in the error",
+    causes: {
+      outOfMemory: "The server ran out of memory (RAM). Give it more in the server settings or remove a heavy mod.",
+      portInUse: (port: number) =>
+        `Another program is already using port ${port} (is another server open?). Close it or change the port in the server settings.`,
+      watchdog:
+        "The server froze: one tick took so long that Minecraft stopped it. This is usually caused by a mod or a very large farm.",
     },
-    missing: (n: number, list: string) =>
-      n === 1
-        ? `The mod “${list}” is missing: you can install it from the Mods tab.`
-        : `These mods are missing: ${list}. You can install them from the Mods tab.`,
-    toMods: "Go to Mods",
+    toSettings: "Go to Settings",
+    groups: {
+      missing: "Needs to be installed",
+      certain: "Must be removed",
+      likely: "Likely cause",
+      possible: "Also in the error (they may not be the cause)",
+    },
+    reasons: {
+      clientOnly: "Only works in the game (client), not on a server.",
+      wrongLoader: (loader: string) => `It's a mod for ${loader}: it doesn't work on this server.`,
+      gameVersion: (needs: string | null) =>
+        needs ? `Made for another Minecraft version (needs ${needs}).` : "Made for another Minecraft version.",
+      loaderVersion: (loader: string, needs: string | null) =>
+        needs ? `Needs ${loader} ${needs}.` : `Needs another version of ${loader}.`,
+      javaVersion: (needs: string) => `Needs Java ${needs}: it's made for a newer Minecraft version.`,
+      dependencyVersion: (dep: string, needs: string | null) =>
+        needs
+          ? `Needs ${dep} ${needs}, and the installed version doesn't fit.`
+          : `Doesn't work with your version of ${dep}.`,
+      missingDependency: (dep: string) => `Something it needs isn't installed (${dep}).`,
+      incompatible: (other: string) => `Not compatible with ${other}.`,
+      duplicate: "Installed twice: the newest version stays.",
+      mixinFailed:
+        "Couldn't modify the game: this usually means it's for another Minecraft version or clashes with another mod.",
+      failed: "Failed to load.",
+      errorInCode: "The error happened inside this mod.",
+      suspected: "Appears in the error.",
+    },
+    why: "Why",
+    neededBy: (list: string) => `Needed by ${list}`,
+    searching: "Looking for where to download it…",
+    notFound: "Micra can't find it for this server version: search for it yourself or remove the mod that needs it.",
+    install: "Install",
+    installing: "Installing…",
+    search: "Search",
+    removeRequester: (name: string) => `Remove ${name}`,
     details: "Show the error",
     openReport: "Open the report",
-    removeAndStart: (n: number) => (n === 1 ? "Remove the mod and start" : `Remove ${n} mods and start`),
+    fix: (remove: number, install: number) =>
+      remove && install
+        ? "Fix and start"
+        : install
+          ? install === 1
+            ? "Install and start"
+            : `Install ${install} mods and start`
+          : remove === 1
+            ? "Remove the mod and start"
+            : `Remove ${remove} mods and start`,
+    fixing: "Fixing…",
     removing: "Removing…",
-    fixedTitle: "Mods removed",
-    fixed: (list: string) => `You removed ${list}. You can start the server again now.`,
+    fixedTitle: "Done",
+    fixed: (removed: string, installed: string) =>
+      (removed && installed
+        ? `You removed ${removed} and installed ${installed}.`
+        : removed
+          ? `You removed ${removed}.`
+          : `You installed ${installed}.`) + " You can start the server again now.",
   },
 
   players: {
@@ -454,12 +493,12 @@ export const en: Dict = {
     perIpHint: "Maximum players connected at once from the same internet IP. 0 means no limit.",
     sandbox: "Run with minimal permissions",
     sandboxHintLinux:
-      "With Landlock, the server can only write to its own folder: a malicious mod can't touch the rest of your computer.",
+      "The server can only write to its own folder, it can't read your personal files (Landlock), and it can't connect to your desktop session, like the keyring or your windows (seccomp): a malicious mod can't reach your files or your programs.",
     sandboxHintWindows:
       "The server runs inside a limited Windows job, without its own console, and it always closes with Micra.",
     lowIntegrity: "Low integrity (experimental)",
     lowIntegrityHint: "Windows also stops it from writing outside its folder. Some modpacks don't work this way.",
-    sandboxLandlock: (abi: number) => `Now: active (Landlock v${abi}).`,
+    sandboxLandlock: (abi: number, seccomp: boolean) => `Now: active (Landlock v${abi}${seccomp ? " + seccomp" : ""}).`,
     sandboxJob: "Now: active (Windows job).",
     sandboxJobLow: "Now: active (Windows job with low integrity).",
     sandboxUnavailable: (reason: string) => `Now: unavailable (${reason}).`,

@@ -102,6 +102,8 @@ pub const SECURE_DEFAULTS: &[(&str, &str)] = &[
     ("enforce-whitelist", "true"),
     ("enable-rcon", "false"),
     ("enable-query", "false"),
+    // Control remoto del servidor por JSON-RPC (Minecraft 1.21.9 o posterior).
+    ("management-server-enabled", "false"),
 ];
 
 pub struct Provisioner<'a> {
@@ -315,7 +317,7 @@ impl Provisioner<'_> {
                     &pack_path,
                     dir,
                     Some(&files_progress),
-                    &internal_paths(),
+                    &pack_skipped_paths(),
                 )
                 .await?;
                 let _ = tokio::fs::remove_file(&pack_path).await;
@@ -343,7 +345,7 @@ impl Provisioner<'_> {
                 let dir_clone = dir.to_path_buf();
                 let zip_clone = zip_path.clone();
                 let files = tokio::task::spawn_blocking(move || {
-                    let protected = internal_paths();
+                    let protected = pack_skipped_paths();
                     archive::extract_zip_filtered(&zip_clone, &dir_clone, true, &|rel| {
                         mrpack::is_protected(rel, &protected)
                     })
@@ -407,8 +409,9 @@ impl Provisioner<'_> {
         java_major_for(self.http, mc_version).await
     }
 
-    /// Deja listo un server pack ya extraído: ejecuta el instalador que trae,
-    /// usa el que ya viene instalado o instala el loader que declara.
+    /// Deja listo un server pack ya extraído: instala el loader de su
+    /// instalador (solo si es el oficial), usa el que ya viene instalado o
+    /// instala el loader que declara.
     pub(crate) async fn finish_server_pack(
         &self,
         dir: &Path,
@@ -416,8 +419,7 @@ impl Provisioner<'_> {
         java: &crate::java::JavaRuntime,
     ) -> Result<(Loader, LaunchTarget)> {
         if let Some(installer) = bundled_installer(dir) {
-            let launch = loaders::run_installer(&installer, dir, java).await?;
-            let _ = tokio::fs::remove_file(&installer).await;
+            let launch = loaders::install_bundled(self.http, &installer, dir, java).await?;
             return Ok((detect_loader(dir), launch));
         }
         let detected = detect_loader(dir);
@@ -462,6 +464,22 @@ pub fn internal_paths() -> Vec<String> {
         crate::server::config::CONFIG_FILE.to_string(),
         ".micra".to_string(),
     ]
+}
+
+/// Listas de jugadores: las decide la persona, nunca el autor de un pack
+/// (un `ops.json` en el pack lo haría operador del servidor de cualquiera).
+pub const PLAYER_LISTS: &[&str] = &[
+    "ops.json",
+    "whitelist.json",
+    "banned-players.json",
+    "banned-ips.json",
+];
+
+/// Lo que no se copia de un pack al crear el servidor.
+pub fn pack_skipped_paths() -> Vec<String> {
+    let mut out = internal_paths();
+    out.extend(PLAYER_LISTS.iter().map(|p| p.to_string()));
+    out
 }
 
 /// Java que pide una versión de Minecraft: el manifiesto de Mojang manda y
@@ -524,10 +542,7 @@ pub fn used_ports(paths: &AppPaths, except: Option<&str>) -> Vec<(u16, String)> 
         if entry.file_name().to_string_lossy().starts_with('.') {
             continue;
         }
-        let Ok(raw) = std::fs::read(entry.path().join(crate::server::config::CONFIG_FILE)) else {
-            continue;
-        };
-        let Ok(cfg) = serde_json::from_slice::<ServerConfig>(&raw) else {
+        let Some(cfg) = ServerConfig::load_sync(&entry.path()) else {
             continue;
         };
         if Some(cfg.id.as_str()) == except {
@@ -591,6 +606,7 @@ pub async fn delete_server(paths: &AppPaths, id: &str, with_backups: bool) -> Re
     // el servidor ya no sale en la lista.
     tokio::fs::rename(paths.server_dir(id), &trash).await?;
     remove_dir(&trash).await?;
+    ServerConfig::forget(&paths.server_dir(id)).await?;
     remove_dir(&paths.stats_dir(id)).await?;
     if with_backups {
         remove_dir(&paths.backups_dir(id)).await?;

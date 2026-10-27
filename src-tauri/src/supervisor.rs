@@ -20,7 +20,7 @@ use micra_core::net::upnp::{UpnpMapping, RENEW_EVERY};
 use micra_core::notify::{restart_warning, NotifyEvent};
 use micra_core::server::backup::{self, BackupKind};
 use micra_core::server::config::ServerConfig;
-use micra_core::server::diagnose::{self, CrashInput, CrashReport};
+use micra_core::server::diagnose::{self, Confidence, CrashInput, CrashReport};
 use micra_core::server::guard::{Guard, GuardAction, GuardState};
 use micra_core::server::monitor::ProcessMonitor;
 use micra_core::server::pack::{self, PackManifest};
@@ -28,7 +28,7 @@ use micra_core::server::process::{message_of, ServerEvent, ServerHandle, ServerS
 use micra_core::server::schedule::{ScheduleAction, Scheduler};
 use micra_core::server::stats::{self, MinuteAccumulator};
 use micra_core::server::tps::{self, TpsReading};
-use micra_core::server::{gamerules, map, mods, players, ports, properties, scan, world};
+use micra_core::server::{gamerules, map, missing, mods, players, ports, properties, scan, world};
 use micra_core::{hardware, tr, Error, Result};
 use tauri::async_runtime::JoinHandle;
 use tauri::AppHandle;
@@ -52,6 +52,9 @@ const TUNNEL_REFRESH: Duration = Duration::from_secs(600);
 const TAIL_LINES: usize = 2000;
 /// Lo que se espera a Modrinth para saber qué mods son solo de cliente.
 const CLIENT_ONLY_LOOKUP: Duration = Duration::from_secs(15);
+/// Lo que se espera a Modrinth y CurseForge para saber dónde descargar los
+/// mods que faltan.
+const MISSING_LOOKUP: Duration = Duration::from_secs(25);
 
 /// Carpeta de un servidor existente. Los ids de Micra son siempre slugs
 /// (`[a-z0-9-]`): se rechaza cualquier otra cosa (`..`, separadores, `C:`).
@@ -183,7 +186,8 @@ async fn check_memory(state: &Shared, config: &ServerConfig) -> Result<()> {
     Ok(())
 }
 
-/// Puerto del juego al día y RCON con una contraseña fuerte si está activo.
+/// Puerto del juego al día, RCON con una contraseña fuerte si está activo y
+/// el mundo dentro de la carpeta del servidor.
 async fn prepare_properties(dir: &Path, config: &ServerConfig) -> Result<()> {
     let props = properties::read_properties(dir).await?;
     let mut changes: Vec<(&str, String)> = Vec::new();
@@ -194,6 +198,15 @@ async fn prepare_properties(dir: &Path, config: &ServerConfig) -> Result<()> {
         && properties::is_weak_password(props.get("rcon.password").map_or("", |p| p.as_str()))
     {
         changes.push(("rcon.password", properties::random_password()));
+    }
+    // Un mundo fuera de la carpeta del servidor (`level-name=../...`), puesto
+    // por un pack, haría que el servidor escribiera fuera de ella.
+    if props
+        .get("level-name")
+        .is_some_and(|name| !properties::is_safe_level_name(name.trim()))
+    {
+        tracing::warn!("level-name apuntaba fuera de la carpeta del servidor; se usa «world»");
+        changes.push(("level-name", "world".to_string()));
     }
     if !changes.is_empty() {
         properties::set_properties(dir, &changes).await?;
@@ -207,7 +220,13 @@ async fn prepare_properties(dir: &Path, config: &ServerConfig) -> Result<()> {
 async fn prepare_world(dir: &Path, config: &mut ServerConfig) -> WorldState {
     let props = properties::read_properties(dir).await.unwrap_or_default();
     let world_dir = world::world_dir(dir, &props);
-    if let Some(hardcore) = config.world.pending_hardcore {
+    // Nunca se escribe a través de un enlace que un mod haya dejado en el camino.
+    let pending = config.world.pending_hardcore.filter(|_| {
+        micra_core::fsutil::check_no_links(dir, &world_dir.join("level.dat"))
+            .inspect_err(|e| tracing::warn!("no se cambia el modo extremo: {e}"))
+            .is_ok()
+    });
+    if let Some(hardcore) = pending {
         // Si el mundo aún no existe, lo crea server.properties.
         match world::set_hardcore(&world_dir, hardcore).await {
             Ok(_) => {
@@ -529,8 +548,8 @@ async fn supervise(
 }
 
 /// Lee por qué falló un servidor con mods y lo deja en el panel: primero lo
-/// que dice el error y después, si Modrinth responde, los mods que solo
-/// funcionan en el juego (cliente).
+/// que dice el error y después, si Modrinth y CurseForge responden, dónde
+/// descargar los mods que faltan y qué mods solo funcionan en el juego.
 async fn diagnose_crash(
     app: &AppHandle,
     state: &Shared,
@@ -538,12 +557,12 @@ async fn diagnose_crash(
     console: Vec<String>,
     during_start: bool,
 ) -> Option<CrashReport> {
-    let id = {
+    let (id, loader) = {
         let cfg = server.config.borrow();
         if !cfg.loader.supports_mods() {
             return None;
         }
-        cfg.id.clone()
+        (cfg.id.clone(), cfg.loader.clone())
     };
     let dir = server.dir.clone();
     let mods = mods::list_mods(&dir).await.ok()?;
@@ -561,45 +580,78 @@ async fn diagnose_crash(
                 mods: &mods,
                 server_dir: &dir,
                 during_start,
+                loader: &loader,
             })
         })
         .await
         .ok()?
     };
     diagnose::add_client_only(&mut report, &mods, &HashSet::new());
+    // Después, por internet: dónde descargar los mods que faltan y, si el
+    // error es de clases del juego (cliente) y no se sabe qué mod las pidió,
+    // qué mods dice Modrinth que solo funcionan en el juego.
+    let client_classes = report.client_classes;
+    let wanted = report.missing.clone();
+    let to_find = wanted.iter().any(|m| m.disabled_file.is_none());
+    report.missing_checked = !to_find;
     let live = state.update_live(&id, |l| l.crash = Some(report.clone()));
     events::live(app, &id, &live);
-
+    if !client_classes && !to_find {
+        return Some(report);
+    }
+    let cfg = server.config.borrow().clone();
     let (app, state) = (app.clone(), state.clone());
     tauri::async_runtime::spawn(async move {
-        let lookup = diagnose::client_only_on_modrinth(&state.modrinth, &mods);
-        let Ok(Ok(sha1s)) = tokio::time::timeout(CLIENT_ONLY_LOOKUP, lookup).await else {
-            return;
+        let curseforge = state.curseforge().await;
+        let client_only = async {
+            if !client_classes {
+                return HashSet::new();
+            }
+            let lookup = diagnose::client_only_on_modrinth(&state.modrinth, &mods);
+            match tokio::time::timeout(CLIENT_ONLY_LOOKUP, lookup).await {
+                Ok(Ok(sha1s)) => sha1s,
+                _ => HashSet::new(),
+            }
         };
-        if sha1s.is_empty() {
-            return;
-        }
+        let found = async {
+            let lookup =
+                missing::find(&state.modrinth, curseforge.as_deref(), &cfg, &mods, &wanted);
+            tokio::time::timeout(MISSING_LOOKUP, lookup)
+                .await
+                .unwrap_or_default()
+        };
+        let (sha1s, found) = tokio::join!(client_only, found);
         // Sin los mods que la persona ya quitó mientras tanto.
         let present: Vec<_> = mods
-            .into_iter()
+            .iter()
             .filter(|m| dir.join(mods::MODS_DIR).join(&m.file_name).exists())
+            .cloned()
             .collect();
         let live = state.update_live(&id, |l| {
-            if let Some(crash) = l.crash.as_mut() {
+            let Some(crash) = l.crash.as_mut() else {
+                return;
+            };
+            if !sha1s.is_empty() {
                 diagnose::add_client_only(crash, &present, &sha1s);
             }
+            for (mod_id, project) in found {
+                if let Some(m) = crash.missing.iter_mut().find(|m| m.id == mod_id) {
+                    m.found = Some(project);
+                }
+            }
+            crash.missing_checked = true;
         });
         events::live(&app, &id, &live);
     });
     Some(report)
 }
 
-/// Los mods que señala el error, para el aviso.
+/// Los mods que el error señala con seguridad, para el aviso.
 fn culprit_names(report: &CrashReport) -> String {
     report
         .culprits
         .iter()
-        .filter(|c| c.in_log)
+        .filter(|c| c.confidence != Confidence::Possible)
         .take(3)
         .map(|c| c.name.clone().unwrap_or_else(|| c.file_name.clone()))
         .collect::<Vec<_>>()

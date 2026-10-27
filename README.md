@@ -127,10 +127,12 @@ abrir una consola. Micra lo hace todo por ti desde una sola ventana:
   que valen para tu servidor, te avisa cuando hay versiones nuevas y actualiza
   el modpack entero conservando tu mundo y los mods que añadiste tú.
 - **Te dice qué mod falla.** Si el servidor no arranca o se cae por culpa de
-  un mod, Micra lee el error y te dice cuál quitar: los que solo funcionan en
-  el juego (de cliente), los que necesitan otro mod que falta, los que son de
-  otra versión o de otro loader y el que dio el error. Los quitas con un clic
-  y vuelves a encenderlo.
+  un mod, Micra lee el error hasta su causa real y te dice qué hacer: instalar
+  el mod que falta (lo busca en Modrinth y CurseForge) o quitar el que lo
+  causa, por ejemplo uno que solo funciona en el juego o que es de otra
+  versión. Solo marca para quitar los mods de los que está seguro; los dudosos
+  aparecen sin marcar, con la línea del error que los señala. Con un clic lo
+  arregla y vuelve a encender el servidor.
 - **Mapa web.** En servidores con Fabric, Forge o NeoForge, instala BlueMap:
   un mapa 3D de tu mundo que se abre en el navegador.
 - **Estadísticas.** Gráficas de CPU, memoria, jugadores y TPS de la última
@@ -185,15 +187,26 @@ entrar.
 - Si una IP falla al entrar muchas veces seguidas, Micra la bloquea un rato.
   También puedes limitar cuántos jugadores entran desde una misma IP.
 - El servidor se ejecuta con permisos mínimos. En Linux solo puede escribir
-  en su propia carpeta, así que un mod malicioso no llega a tus archivos
-  personales. En Windows no puede usar el portapapeles ni cambiar la
+  en su propia carpeta, no puede leer tus archivos personales y no puede
+  conectarse a tu sesión de escritorio (el llavero, las ventanas, la
+  terminal), así que un mod malicioso no llega a tus archivos ni a tus
+  programas. En Windows no puede usar el portapapeles ni cambiar la
   configuración del sistema, y en sus ajustes puedes impedir también que
   escriba fuera de su carpeta (experimental).
-- Antes de cada arranque, Micra revisa los mods y plugins y no enciende el
-  servidor si encuentra malware conocido.
+- Un mod no puede cambiar los ajustes que Micra guarda de su servidor (por
+  ejemplo, para quitarse los permisos mínimos): están fuera de su carpeta.
+- Un modpack no puede hacer operador a nadie ni guardar el mundo fuera de la
+  carpeta del servidor, y si trae un instalador de Forge o NeoForge, Micra
+  solo lo usa si es exactamente el oficial.
+- Los servidores de versiones antiguas (1.7 a 1.18) quedan protegidos contra
+  Log4Shell, el fallo que dejaba a cualquiera tomar el control del servidor
+  con un mensaje en el chat.
+- Antes de cada arranque, Micra revisa todos los archivos `.jar` del servidor
+  y no lo enciende si encuentra malware conocido.
 - Todo se descarga por HTTPS. Cuando la fuente publica la huella del archivo
   (Mojang, Modrinth, CurseForge, Java, Forge y NeoForge), Micra la comprueba
-  antes de usarlo.
+  antes de usarlo. El instalador de Linux también comprueba la huella de los
+  paquetes de Micra antes de instalarlos.
 - La clave de CurseForge, el webhook de Discord y la cuenta de playit.gg se
   guardan en el llavero del sistema. Si tu escritorio no tiene llavero, van a
   un archivo que solo puede leer tu usuario.

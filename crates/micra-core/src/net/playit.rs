@@ -26,7 +26,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use crate::download::{download_file, hash_file, ExpectedHash, HashAlgo};
-use crate::fsutil::write_atomic_sync;
+use crate::fsutil::{write_atomic_sync, write_private_sync};
 use crate::{tr, Error, Result};
 
 const API: &str = "https://api.playit.gg";
@@ -774,13 +774,7 @@ fn attach_job(child: &tokio::process::Child) -> Option<crate::server::sandbox::w
 }
 
 fn write_private(path: &Path, content: &str) -> Result<()> {
-    write_atomic_sync(path, content.as_bytes())?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
-    }
-    Ok(())
+    write_private_sync(path, content.as_bytes())
 }
 
 fn tail(path: &Path, lines: usize) -> Vec<String> {

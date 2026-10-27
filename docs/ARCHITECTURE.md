@@ -133,15 +133,43 @@ El supervisor guarda las últimas 2000 líneas de la consola (si se perdió
 alguna, relee `logs/latest.log`). Si el servidor se cae, o no llega a abrirse
 (Forge termina con código 0 cuando un mod no carga, y eso también cuenta como
 fallo), `server/diagnose.rs` lee esas líneas y el informe que Minecraft deja
-en `crash-reports/` y señala qué mods quitar: los de cliente (por sus
-metadatos o porque el error carga clases del juego), los que necesitan otro
-mod que falta, los de otra versión o de otro loader, los repetidos, el que dio
-el error y, como sospechosos, los que aparecen en la traza. Cada uno se
-resuelve a su archivo de `mods/` por id, nombre, clase o configuración de
-mixins. Después pregunta a Modrinth, con los hashes, qué mods no funcionan en
-un servidor (`server_side: unsupported`) y los añade. El panel muestra la
-lista con un botón para quitarlos y volver a encender, y el aviso del
-escritorio o de Discord nombra los mods.
+en `crash-reports/`. Solo cuenta el error que paró el servidor: los avisos y
+errores que no lo pararon (mixins opcionales, compatibilidades con mods que no
+están, mods de otro loader que se ignoran) no se tienen en cuenta, porque si
+contaran se pedirían quitar mods sanos. De ese error se saca, en este orden:
+
+1. Lo que dice el loader de cada mod (Fabric, Forge o NeoForge): le falta otro
+   mod, es para otra versión de Minecraft, del loader o de Java, es de otro
+   loader, está repetido o no es compatible con otro. Es seguro.
+2. La causa real de la excepción, la última `Caused by` de la cadena (no la
+   primera línea), y el mod en cuyo código ocurrió: la primera línea de su
+   traza que no es de Java, del juego ni de un loader. Según el tipo de error
+   es seguro (carga clases del cliente, le falta una clase, falló un mixin) o
+   probable (el error ocurrió en su código).
+3. Lo demás que aparece (los «Suspected Mods» de Forge, un mod más abajo en
+   la traza, el hilo que se quedó colgado) solo es posible.
+
+Si falta un mod, lo que se propone es instalarlo, no quitar el que lo pide; si
+la clase que falta es de un mod que sí está, lo que falla es su versión. Lo
+que no es culpa de un mod (sin memoria, el puerto ocupado, el servidor
+colgado) se explica como tal. Cada mod se resuelve a su archivo de `mods/` por
+id, nombre, paquete de sus clases o configuración de mixins (también dentro
+de los jars incluidos en otros).
+
+Después, por internet, `server/missing.rs` busca dónde descargar cada mod que
+falta, con versión para el Minecraft y el loader del servidor: primero la
+dependencia que declara en Modrinth el mod que lo pide, luego el proyecto de
+Modrinth que se llama como él y, si no, el buscador de Modrinth y CurseForge.
+Si el error es de clases del cliente y no se sabe qué mod las pidió, también
+pregunta a Modrinth, con los hashes, qué mods no funcionan en un servidor
+(`server_side: unsupported`).
+
+El panel muestra lo que falta con un botón para instalarlo y los mods que
+sobran agrupados por lo seguro que es cada uno, con las líneas del error que
+los señalan. Solo van marcados para quitar los seguros (y los probables si no
+hay nada seguro ni falta nada); un botón instala lo que falta, quita lo
+marcado y vuelve a encender. El aviso del escritorio o de Discord nombra los
+mods seguros y probables.
 
 ## 3. Estructura de carpetas
 
@@ -185,11 +213,12 @@ Micra/
 │  │     ├─ gamerules.rs         reglas del juego según la versión
 │  │     ├─ world.rs             modo extremo y reglas guardadas en el mundo
 │  │     ├─ mods.rs, pack.rs     mods de Modrinth y CurseForge, y actualización de modpacks
-│  │     ├─ diagnose.rs          qué mods quitar cuando el servidor no arranca
+│  │     ├─ diagnose.rs          qué mod impide arrancar y qué falta
+│  │     ├─ missing.rs           dónde descargar los mods que faltan
 │  │     ├─ map.rs               BlueMap
 │  │     ├─ ports.rs, version.rs
 │  │     ├─ guard.rs             bloqueo de IPs y límite por IP
-│  │     ├─ sandbox/             Landlock (Linux) y Job Object (Windows)
+│  │     ├─ sandbox/             Landlock y seccomp (Linux), Job Object (Windows)
 │  │     ├─ scan.rs              malware conocido en los .jar
 │  │     ├─ detect.rs            detectar jar / args file
 │  │     └─ eula.rs
@@ -220,8 +249,10 @@ Datos del usuario (fuera del repo):
 Linux:   ~/.local/share/micra/
 Windows: %APPDATA%\Micra\Micra\data\
   ├─ runtimes/java-8, java-17, java-21, …
-  ├─ servers/<id>/  (mundo, mods, micra.json, eula.txt, server.properties;
-  │                  .micra/ guarda qué mods vinieron de CurseForge)
+  ├─ servers/<id>/  (mundo, mods, eula.txt, server.properties, una copia de
+  │                  micra.json; .micra/ guarda qué mods vinieron de CurseForge)
+  ├─ servers/.configs/ (la configuración de cada servidor que Micra usa de
+  │                  verdad y la caché del escáner, fuera de su alcance)
   ├─ backups/<id>/  (copias en ZIP)
   ├─ stats/<id>/    (un CSV por día)
   ├─ tools/         (agente de playit.gg)
@@ -263,16 +294,54 @@ Windows: %APPDATA%\Micra\Micra\data\
   nuevo no usa el id de uno borrado cuyas copias se guardaron, para no
   heredarlas.
 - **Seguro por defecto**: todo servidor nace con `online-mode` y lista blanca
-  obligatoria; si la persona los quita, el panel lo avisa. RCON y query
-  quedan apagados (Micra usa la consola); si se activa RCON, Micra le pone una
-  contraseña de 32 caracteres y nunca abre su puerto. UPnP y el túnel están
+  obligatoria; si la persona los quita, el panel lo avisa. RCON, query y el
+  servidor de gestión por JSON-RPC (1.21.9 o posterior) quedan apagados
+  (Micra usa la consola); si se activa RCON, Micra le pone una contraseña de
+  32 caracteres y nunca abre su puerto. UPnP y el túnel están
   apagados hasta que la persona los activa.
 - **Secretos** (webhook de Discord, clave de CurseForge, clave del agente de
   playit.gg) en el llavero del sistema; sin llavero, en un archivo que solo
-  lee el usuario.
+  lee el usuario desde que se crea. En Linux, la carpeta de datos es solo del
+  usuario (0700).
+- **El servidor se trata como no confiable**: un mod puede ser malicioso.
+  - En Linux corre con Landlock (solo escribe en su carpeta y solo lee su Java
+    y lo que necesita del sistema) y seccomp (sin sockets Unix, que llevan a
+    D-Bus, al escritorio o al agente SSH; sin espacios de nombres, io_uring,
+    llavero del kernel, `ptrace` ni escribir en la terminal). Arranca con un
+    entorno limpio (solo `PATH`, idioma, zona horaria...), con su carpeta
+    temporal y su "carpeta personal" dentro de la suya, en una sesión propia
+    y sin heredar descriptores de Micra. El instalador de Forge/NeoForge corre
+    con el mismo aislamiento. Sin Landlock (kernel anterior a 5.13) el panel
+    lo dice, aunque seccomp siga activo.
+  - En Windows, Job Object (sin portapapeles ni cambios del sistema) y, si la
+    persona lo activa, nivel de integridad bajo para que no escriba fuera de
+    su carpeta. Sin eso, en Windows el servidor puede leer los archivos del
+    usuario.
+  - La configuración que Micra usa está fuera de la carpeta del servidor
+    (`servers/.configs/<id>.json`): un mod podría editar `micra.json` para
+    apagar el aislamiento o añadir argumentos a Java. `micra.json` queda como
+    copia que Micra ya no lee; un servidor de la 0.3.0 se adopta una vez, con
+    el aislamiento encendido.
+  - Micra nunca escribe, extrae, mueve ni borra a través de un enlace que haya
+    en la carpeta del servidor (`fsutil::check_no_links`): lo sustituye en vez
+    de seguirlo. Las extracciones comprueban además el tamaño (bombas ZIP).
+- **Lo que no se acepta de un modpack**: listas de jugadores (`ops.json`,
+  `whitelist.json`... harían operador a su autor), un `level-name` fuera de
+  la carpeta del servidor y un instalador de Forge/NeoForge que no sea byte a
+  byte el oficial (se compara con el SHA-1 que publica su repositorio; si no
+  coincide, se descarga el oficial).
+- **Log4Shell** (CVE-2021-44228): todo servidor arranca con
+  `-Dlog4j2.formatMsgNoLookups=true` y, de 1.7 a 1.16, con la configuración
+  del registro que publicó Mojang (`.micra/log4j2.xml`).
 - **El escáner de malware no es un antivirus**: busca indicadores concretos
   de familias conocidas (fractureiser y ladrones de cuentas) en las cadenas de
-  las clases, también en jars anidados. Reduce el riesgo; no lo elimina.
+  las clases, también en jars anidados. Analiza todos los jars del servidor
+  (fuera de `mods/` y `plugins/` solo cuenta el malware conocido) y guarda sus
+  resultados fuera de su carpeta, donde un mod no puede marcarse como limpio.
+  Reduce el riesgo; no lo elimina.
+- **La interfaz** solo puede abrir en el navegador unas pocas páginas
+  (`capabilities/default.json`); las carpetas y el resto de enlaces los abre
+  el backend tras validarlos.
 - **Afinidad en Windows**: `SetProcessAffinityMask` cubre el primer grupo de
   64 CPUs lógicas; suficiente para equipos domésticos.
 - **Flags de la JVM**: flags de G1 de Aikar activados por defecto
@@ -294,7 +363,10 @@ solo existen en la máquina que compila, y esa máquina es GitHub Actions
 
 `micra-install.sh` usa primero los paquetes que haya junto a él (útil con los
 artefactos de Actions o con el repositorio privado) y, si no hay, descarga la
-release de GitHub. En distribuciones sin FUSE 2, el lanzador del AppImage
+release de GitHub, solo por HTTPS (también en las redirecciones). Antes de
+instalar un paquete comprueba su SHA-256: el flujo de publicación escribe en
+el script las huellas de los paquetes de esa versión, y para otra versión usa
+las que da la API de GitHub. En distribuciones sin FUSE 2, el lanzador del AppImage
 activa `APPIMAGE_EXTRACT_AND_RUN` para que arranque igual.
 
 Para una distribución pública:
@@ -340,7 +412,8 @@ Para una distribución pública:
    jugadores, mods y actualizaciones de modpacks, importar servidores, BlueMap,
    avisos, estadísticas y cinco idiomas.
 6. ✅ Seguridad: valores seguros por defecto, RCON protegido, bloqueo de IPs,
-   permisos mínimos, análisis de malware y secretos en el llavero.
+   aislamiento del servidor (Landlock y seccomp en Linux), análisis de
+   malware, protección contra Log4Shell y secretos en el llavero.
 7. ✅ Firma de código (con el certificado de quien publica) y actualizaciones
    automáticas.
 8. Regla del firewall de Windows.

@@ -85,15 +85,18 @@ impl ServerHandle {
         server_dir: &Path,
         java: &JavaRuntime,
     ) -> Result<(Self, broadcast::Receiver<ServerEvent>)> {
-        let sandboxed = cfg.security.sandbox;
-        if sandboxed {
+        // Si un mod cambió las carpetas de Micra por enlaces (a la carpeta
+        // personal, por ejemplo), vuelven a ser carpetas de verdad.
+        crate::fsutil::ensure_real_dir(&server_dir.join(".micra"))?;
+        if cfg.security.sandbox {
             for dir in [
                 crate::server::sandbox::HOME_DIR,
                 crate::server::sandbox::TMP_DIR,
             ] {
-                tokio::fs::create_dir_all(server_dir.join(dir)).await?;
+                crate::fsutil::ensure_real_dir(&server_dir.join(dir))?;
             }
         }
+        crate::server::launcher::write_log4j_config(cfg, server_dir).await?;
         let mut cmd = build_command(cfg, server_dir, java);
         let (mut child, sandbox, guard) = spawn_sandboxed(&mut cmd, cfg, server_dir, java)?;
         if let Some(cores) = &cfg.cpu.cores {
@@ -343,6 +346,41 @@ impl ServerHandle {
     }
 }
 
+/// Ejecuta un programa de Java auxiliar sobre la carpeta de un servidor (el
+/// instalador de Forge/NeoForge) con el mismo aislamiento que el servidor
+/// en Linux, y espera a que termine. `cmd` debe venir de
+/// `launcher::apply_sandbox_env` con `launcher::sandbox_jvm_args`.
+pub async fn output_isolated(
+    cmd: &mut tokio::process::Command,
+    server_dir: &Path,
+    java: &JavaRuntime,
+) -> Result<std::process::Output> {
+    crate::fsutil::ensure_real_dir(&server_dir.join(".micra"))?;
+    for dir in [
+        crate::server::sandbox::HOME_DIR,
+        crate::server::sandbox::TMP_DIR,
+    ] {
+        crate::fsutil::ensure_real_dir(&server_dir.join(dir))?;
+    }
+    #[cfg(target_os = "linux")]
+    {
+        use crate::server::sandbox::linux;
+        match linux::prepare(server_dir, &java.home) {
+            Ok(Some(prepared)) => {
+                linux::apply_pre_exec(cmd, &prepared);
+                let output = cmd.output().await;
+                drop(prepared);
+                return Ok(output?);
+            }
+            Ok(None) => {}
+            Err(e) => tracing::warn!("no se pudo aislar el instalador: {e}"),
+        }
+    }
+    #[cfg(not(target_os = "linux"))]
+    let _ = java;
+    Ok(cmd.output().await?)
+}
+
 /// Lo que hay que mantener vivo mientras corre el servidor (en Windows, el
 /// Job Object).
 type SandboxGuard = Option<Box<dyn Send + Sync>>;
@@ -363,20 +401,17 @@ fn spawn_sandboxed(
         Ok(Some(prepared)) => {
             linux::apply_pre_exec(cmd, &prepared);
             let child = cmd.spawn()?;
-            let abi = prepared.abi;
+            let status = match prepared.abi {
+                Some(abi) => SandboxStatus::Landlock {
+                    abi,
+                    seccomp: prepared.seccomp(),
+                },
+                None => no_landlock(prepared.seccomp()),
+            };
             drop(prepared);
-            Ok((child, SandboxStatus::Landlock { abi }, None))
+            Ok((child, status, None))
         }
-        Ok(None) => Ok((
-            cmd.spawn()?,
-            SandboxStatus::Unavailable {
-                reason: tr!(
-                    "este kernel no tiene Landlock (hace falta Linux 5.13 o posterior con Landlock activado)",
-                    "this kernel has no Landlock (Linux 5.13 or later with Landlock enabled is needed)"
-                ),
-            },
-            None,
-        )),
+        Ok(None) => Ok((cmd.spawn()?, no_landlock(false), None)),
         Err(e) => {
             tracing::warn!("no se pudo preparar Landlock: {e}");
             Ok((
@@ -388,6 +423,25 @@ fn spawn_sandboxed(
             ))
         }
     }
+}
+
+/// Sin Landlock, el servidor puede leer y escribir en toda la carpeta del
+/// usuario: la interfaz lo muestra como no disponible aunque el filtro de
+/// llamadas al sistema sí se aplique.
+#[cfg(target_os = "linux")]
+fn no_landlock(seccomp: bool) -> SandboxStatus {
+    let reason = if seccomp {
+        tr!(
+            "este kernel no tiene Landlock (hace falta Linux 5.13 o posterior con Landlock activado); solo se aplica el filtro de llamadas al sistema",
+            "this kernel has no Landlock (Linux 5.13 or later with Landlock enabled is needed); only the system call filter is applied"
+        )
+    } else {
+        tr!(
+            "este kernel no tiene Landlock (hace falta Linux 5.13 o posterior con Landlock activado)",
+            "this kernel has no Landlock (Linux 5.13 or later with Landlock enabled is needed)"
+        )
+    };
+    SandboxStatus::Unavailable { reason }
 }
 
 #[cfg(windows)]

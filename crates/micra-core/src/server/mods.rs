@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use crate::download::{download_file, ExpectedHash, HashAlgo};
-use crate::fsutil::write_atomic;
+use crate::fsutil::{check_no_links, write_atomic};
 use crate::providers::curseforge::{CfFile, CfMod, CurseForgeClient};
 use crate::providers::modrinth::{ModrinthClient, Version};
 use crate::providers::mrpack::is_allowed_url;
@@ -108,10 +108,8 @@ impl CfRegistry {
     }
 
     pub async fn save(&self, server_dir: &Path) -> Result<()> {
+        crate::fsutil::internal_dir(server_dir, ".micra")?;
         let path = server_dir.join(CURSEFORGE_REGISTRY);
-        if let Some(parent) = path.parent() {
-            tokio::fs::create_dir_all(parent).await?;
-        }
         write_atomic(&path, &serde_json::to_vec_pretty(self)?).await
     }
 
@@ -342,6 +340,7 @@ pub async fn set_enabled(server_dir: &Path, file_name: &str, enabled: bool) -> R
     };
     if target != file_name {
         let mods = server_dir.join(MODS_DIR);
+        check_no_links(server_dir, &mods.join(file_name))?;
         tokio::fs::rename(mods.join(file_name), mods.join(&target)).await?;
     }
     Ok(target)
@@ -359,8 +358,8 @@ pub async fn remove_mod(server_dir: &Path, file_name: &str) -> Result<()> {
 }
 
 async fn move_to_old(server_dir: &Path, path: &Path) -> Result<()> {
-    let old = server_dir.join(OLD_MODS_DIR);
-    tokio::fs::create_dir_all(&old).await?;
+    check_no_links(server_dir, path)?;
+    let old = crate::fsutil::internal_dir(server_dir, OLD_MODS_DIR)?;
     let name = path.file_name().unwrap_or_default();
     tokio::fs::rename(path, old.join(name)).await?;
     Ok(())
@@ -387,7 +386,7 @@ async fn fetch_verified(
             "Modrinth did not publish the hash of {name}, so it cannot be verified"
         ))
     })?;
-    let tmp = server_dir.join(DOWNLOADS_DIR).join(&file.filename);
+    let tmp = crate::fsutil::internal_dir(server_dir, DOWNLOADS_DIR)?.join(&file.filename);
     download_file(
         http,
         &file.url,
@@ -414,7 +413,7 @@ async fn fetch_curseforge(
             "CurseForge did not publish the hash of {name}, so it cannot be verified"
         )));
     }
-    let tmp = server_dir.join(DOWNLOADS_DIR).join(&file.file_name);
+    let tmp = crate::fsutil::internal_dir(server_dir, DOWNLOADS_DIR)?.join(&file.file_name);
     cf.download(file, &tmp, None).await?;
     check_malware(&tmp, &file.file_name).await?;
     Ok(tmp)
@@ -537,7 +536,9 @@ async fn place(
         }
         ids.insert(id, name.to_string());
     }
-    tokio::fs::rename(tmp, server_dir.join(MODS_DIR).join(name)).await?;
+    let target = server_dir.join(MODS_DIR).join(name);
+    check_no_links(server_dir, &target)?;
+    tokio::fs::rename(tmp, target).await?;
     Ok(true)
 }
 
@@ -961,6 +962,7 @@ async fn replace_mod(
     if old_path.exists() {
         move_to_old(server_dir, &old_path).await?;
     }
+    check_no_links(server_dir, &mods_dir.join(&target_name))?;
     tokio::fs::rename(tmp, mods_dir.join(&target_name)).await?;
 
     if let Some(mut manifest) = PackManifest::load(server_dir).await {

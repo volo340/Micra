@@ -95,6 +95,7 @@ pub async fn install_mrpack(
             let done = &done;
             async move {
                 let dest = safe_join(server_dir, &file.path)?;
+                crate::fsutil::check_no_links(server_dir, &dest)?;
                 let url = file
                     .downloads
                     .iter()

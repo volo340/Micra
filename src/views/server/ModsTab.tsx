@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
 import {
   ArrowUpCircle,
   Check,
@@ -19,6 +19,7 @@ import { Banner, CardTitle, Progress } from "../../components/ui";
 import { useT, type Dict } from "../../i18n";
 import { api, onProvisionStep } from "../../lib/api";
 import { formatBytes, formatCompact, loaderName } from "../../lib/format";
+import { clearModSearch, peekModSearch } from "../../lib/modSearchIntent";
 import type {
   ContentHit,
   ModInfo,
@@ -85,6 +86,15 @@ export function ModsTab({ server, onError, onChanged }: Props) {
   const { progress, run } = useTask(id);
   const [dialog, confirm] = useConfirm();
   const locked = !stopped || working !== null || server.busy;
+  // Si se llega desde la tarjeta del error, el buscador ya viene con el mod
+  // que falta y se baja hasta él en cuanto está la lista de mods.
+  const [initialQuery] = useState(() => peekModSearch(id));
+  const searchRef = useRef<HTMLElement>(null);
+  useEffect(() => clearModSearch(id), [id]);
+  const listed = mods !== null;
+  useEffect(() => {
+    if (initialQuery && listed) searchRef.current?.scrollIntoView({ block: "start" });
+  }, [initialQuery, listed]);
 
   const checkUpdates = useCallback(
     async (quiet: boolean) => {
@@ -374,6 +384,8 @@ export function ModsTab({ server, onError, onChanged }: Props) {
 
       <ModSearch
         server={server}
+        initialQuery={initialQuery}
+        sectionRef={searchRef}
         locked={locked}
         installedProjects={new Set((mods ?? []).flatMap((m) => (remote[m.sha1] ? [modKey(remote[m.sha1])] : [])))}
         onInstalled={() => load()}
@@ -445,6 +457,9 @@ const modKey = (m: { source: string; projectId: string }) => `${m.source}:${m.pr
 /** Buscar e instalar mods de Modrinth y CurseForge compatibles con el servidor. */
 function ModSearch(props: {
   server: ServerSummary;
+  /** Lo que se busca al abrir (el mod que faltaba, si se llega desde el error). */
+  initialQuery: string;
+  sectionRef: RefObject<HTMLElement>;
   locked: boolean;
   /** Proyectos (fuente e id) que ya están en la carpeta de mods. */
   installedProjects: Set<string>;
@@ -454,7 +469,7 @@ function ModSearch(props: {
   const t = useT();
   const toast = useToast();
   const { config } = props.server;
-  const [query, setQuery] = useState("");
+  const [query, setQuery] = useState(props.initialQuery);
   const [installing, setInstalling] = useState<string | null>(null);
   const [installed, setInstalled] = useState<Set<string>>(new Set());
   const fetchPage = useCallback(
@@ -480,7 +495,7 @@ function ModSearch(props: {
   };
 
   return (
-    <section className="card card-pad settings-card">
+    <section className="card card-pad settings-card" ref={props.sectionRef}>
       <CardTitle
         icon={<PackageSearch size={17} />}
         title={t.mods.addTitle}

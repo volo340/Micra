@@ -9,7 +9,9 @@
 //   ?update=1         hay una versión nueva de Micra
 //   ?malware=1        el análisis de mods encuentra algo
 //   ?modfail=1        el asistente no consigue instalar el segundo mod elegido
-//   ?crash=1          «Aventura con mods» no arrancó: Micra señala qué mods quitar
+//   ?crash=1          «Aventura con mods» no arrancó: Micra señala qué mods quitar y cuál falta
+//   ?crash=lost       igual, pero no se encuentra dónde descargar el que falta
+//   ?crash=memory     «Aventura con mods» se quedó sin memoria
 //   ?nocf=1           sin clave de CurseForge: solo se busca en Modrinth
 //
 // Una clave de CurseForge que empiece por cfc_pat_ se rechaza, como la «Profile API key».
@@ -181,42 +183,86 @@ const CRASH: CrashReport = {
       modId: "iris",
       name: "Iris",
       reason: { kind: "clientOnly" },
-      inLog: true,
-    },
-    {
-      fileName: "betterhud-fabric-1.2.0.jar",
-      modId: "betterhud",
-      name: "Better HUD",
-      reason: { kind: "missingDependency", dependency: "cloth-config" },
-      inLog: true,
+      confidence: "certain",
+      evidence:
+        "java.lang.RuntimeException: Cannot load class net.minecraft.class_310 in environment type SERVER\n" +
+        "\tat net.coderbot.iris.Iris.onEarlyInitialize(Iris.java:124)",
     },
     {
       fileName: "create-fabric-0.5.1-f-build.1417+mc1.20.1.jar",
       modId: "create",
       name: "Create",
       reason: { kind: "suspected" },
-      inLog: true,
-    },
-    {
-      fileName: "sodium-fabric-mc1.20.1-0.5.3.jar",
-      modId: "sodium",
-      name: "Sodium",
-      reason: { kind: "clientOnly" },
-      inLog: false,
+      confidence: "possible",
+      evidence:
+        "java.lang.RuntimeException: Cannot load class net.minecraft.class_310 in environment type SERVER\n" +
+        "\tat com.simibubi.create.Create.onInitialize(Create.java:153)",
     },
   ],
-  missing: ["cloth-config"],
-  headline:
-    "java.lang.RuntimeException: Could not execute entrypoint stage 'main' due to errors, provided by 'betterhud' at 'dev.betterhud.Hud'!",
+  missing: [
+    {
+      id: "cloth-config",
+      version: "≥ 11.1.106",
+      requiredBy: [{ fileName: "betterhud-fabric-1.2.0.jar", name: "Better HUD" }],
+      disabledFile: null,
+      found: null,
+    },
+  ],
+  cause: null,
+  headline: "java.lang.RuntimeException: Cannot load class net.minecraft.class_310 in environment type SERVER",
   reportFile: "crash-reports/crash-2026-10-24_12.30.11-server.txt",
   duringStart: true,
+  clientClasses: true,
+  missingChecked: false,
+};
+
+/** ?crash=memory: se quedó sin memoria, no es culpa de ningún mod. */
+const MEMORY_CRASH: CrashReport = {
+  culprits: [],
+  missing: [],
+  cause: { kind: "outOfMemory" },
+  headline: "java.lang.OutOfMemoryError: Java heap space",
+  reportFile: null,
+  duringStart: false,
+  clientClasses: false,
+  missingChecked: true,
 };
 
 if (params.get("crash")) {
+  const crash = params.get("crash") === "memory" ? MEMORY_CRASH : CRASH;
   servers = servers.map((s) =>
-    s.config.id === "aventura-con-mods" ? { ...s, status: "crashed", live: { ...s.live, crash: CRASH } } : s,
+    s.config.id === "aventura-con-mods" ? { ...s, status: "crashed", live: { ...s.live, crash } } : s,
   );
+  // Como en la app: dónde descargar lo que falta llega un poco después.
+  setTimeout(() => {
+    const live = servers.find((s) => s.config.id === "aventura-con-mods")?.live;
+    if (!live?.crash) return;
+    setLive("aventura-con-mods", {
+      crash: {
+        ...live.crash,
+        missing: live.crash.missing.map((m) =>
+          m.id === "cloth-config" && params.get("crash") !== "lost"
+            ? { ...m, found: { source: "modrinth", projectId: "9s6osm5g", title: "Cloth Config API" } }
+            : m,
+        ),
+        missingChecked: true,
+      },
+    });
+  }, 1500);
 }
+
+/** Cambia el aviso de por qué falló el último arranque, si lo hay. */
+function updateCrash(id: string, change: (crash: CrashReport) => CrashReport) {
+  const crash = find(id).live.crash;
+  if (crash) setLive(id, { crash: change(crash) });
+}
+
+/** Deja de pedir los mods que faltaban y ya están instalados y activos. */
+const forgetInstalled = (id: string) =>
+  updateCrash(id, (crash) => ({
+    ...crash,
+    missing: crash.missing.filter((m) => !modsOf(id).some((x) => x.enabled && x.modId === m.id)),
+  }));
 
 const find = (id: string) => {
   const s = servers.find((x) => x.config.id === id);
@@ -334,7 +380,7 @@ async function start(id: string, fast = false) {
     sandbox: config.security.sandbox
       ? platform === "windows"
         ? { kind: "jobObject", lowIntegrity: config.security.lowIntegrity }
-        : { kind: "landlock", abi: 4 }
+        : { kind: "landlock", abi: 6, seccomp: true }
       : { kind: "disabled" },
     upnp: config.network.upnp ? { kind: "opening" } : null,
     tunnel: config.network.tunnel ? { kind: "starting" } : null,
@@ -1334,7 +1380,7 @@ mockIPC(
       // La app
       case "app_info":
         return {
-          version: "0.3.0",
+          version: "0.3.1",
           dataDir: DATA_DIR,
           // Como la versión publicada, que trae su clave (salvo con ?nocf=1).
           curseforgeEnabled: curseforgeOn(),
@@ -1373,7 +1419,7 @@ mockIPC(
         await sleep(600);
         return params.get("update")
           ? {
-              version: "0.3.1",
+              version: "0.3.2",
               notes: "Copias más rápidas y correcciones en el túnel.",
               date: new Date().toISOString(),
               canInstall: true,
@@ -1509,6 +1555,13 @@ mockIPC(
             return { ...m, enabled, fileName: renamed };
           }),
         );
+        if (enabled) {
+          updateCrash(id, (crash) => ({
+            ...crash,
+            missing: crash.missing.filter((m) => m.disabledFile !== a.fileName),
+          }));
+          forgetInstalled(id);
+        }
         return renamed;
       }
       case "remove_mod": {
@@ -1516,11 +1569,25 @@ mockIPC(
           id,
           modsOf(id).filter((m) => m.fileName !== a.fileName),
         );
-        // Si era uno de los que impedían arrancar, ya no se avisa de él.
-        const crash = find(id).live.crash;
-        if (crash)
-          setLive(id, { crash: { ...crash, culprits: crash.culprits.filter((c) => c.fileName !== a.fileName) } });
+        // Si era uno de los que impedían arrancar, ya no se avisa de él ni de
+        // lo que le faltaba solo a él.
+        updateCrash(id, (crash) => ({
+          ...crash,
+          culprits: crash.culprits.filter((c) => c.fileName !== a.fileName),
+          missing: crash.missing
+            .map((m) => ({ ...m, requiredBy: m.requiredBy.filter((r) => r.fileName !== a.fileName) }))
+            .filter((m, i) => m.requiredBy.length > 0 || crash.missing[i].requiredBy.length === 0),
+        }));
         return null;
+      }
+      case "install_missing_mod": {
+        await sleep(1100);
+        const wanted = find(id).live.crash?.missing.find((m) => m.id === a.modId);
+        if (!wanted?.found) throw `No se sabe dónde descargar ${a.modId}`;
+        const file = `${wanted.id}-${modrinthLoadersOf(find(id).config.loader)[0]}-1.0.0.jar`;
+        mods.set(id, [...modsOf(id), mod(file, wanted.found.title, "1.0.0", wanted.id, false)]);
+        updateCrash(id, (crash) => ({ ...crash, missing: crash.missing.filter((m) => m.id !== a.modId) }));
+        return [file];
       }
       case "dismiss_crash":
         setLive(id, { crash: null });
@@ -1571,6 +1638,7 @@ mockIPC(
         const file = `${modId}-${modrinthLoadersOf(find(id).config.loader)[0]}-1.0.0.jar`;
         if (curseforge) fromCurseForge.set(fakeHash(file), String(a.projectId));
         mods.set(id, [...modsOf(id), mod(file, name, "1.0.0", modId, false)]);
+        forgetInstalled(id);
         return [file];
       }
       case "scan_mods": {

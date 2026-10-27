@@ -18,6 +18,6 @@ pub async fn write_eula(server_dir: &Path, accepted: bool) -> Result<()> {
                    # https://aka.ms/MinecraftEULA\n\
                    eula=true\n";
     tokio::fs::create_dir_all(server_dir).await?;
-    tokio::fs::write(server_dir.join("eula.txt"), content).await?;
-    Ok(())
+    // Sin seguir un enlace que hubiera con ese nombre.
+    crate::fsutil::write_atomic(&server_dir.join("eula.txt"), content.as_bytes()).await
 }

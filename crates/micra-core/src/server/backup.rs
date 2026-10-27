@@ -522,16 +522,15 @@ fn restore_sync(
     manifest: &BackupManifest,
     progress: Option<BackupProgress>,
 ) -> Result<()> {
-    let micra = server_dir.join(".micra");
+    // Carpetas de trabajo de verdad y vacías: si un mod dejó enlaces en su
+    // lugar, se quitan los enlaces (no lo que apuntan).
+    let micra = crate::fsutil::internal_dir(server_dir, ".micra")?;
     let staging = micra.join("restore-tmp");
     let old = micra.join("restore-old");
     for dir in [&staging, &old] {
-        if dir.exists() {
-            std::fs::remove_dir_all(dir)?;
-        }
+        crate::fsutil::remove_entry(dir)?;
+        std::fs::create_dir_all(dir)?;
     }
-    std::fs::create_dir_all(&staging)?;
-    std::fs::create_dir_all(&old)?;
     ensure_space(server_dir, manifest.bytes)?;
 
     // 1. Extraer en una carpeta aparte (si falla, el servidor no se toca).
@@ -556,6 +555,7 @@ fn restore_sync(
     let outcome = (|| -> Result<()> {
         for root in &roots {
             let current = server_dir.join(root);
+            crate::fsutil::check_no_links(server_dir, &current)?;
             if std::fs::symlink_metadata(&current).is_ok() {
                 let target = old.join(root);
                 if let Some(parent) = target.parent() {

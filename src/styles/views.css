@@ -360,11 +360,27 @@
   font-weight: 600;
 }
 
-.crash-missing > span {
+.crash-item {
+  display: flex;
+  flex-direction: column;
+}
+
+/* La casilla y el texto del mod: pulsar el nombre también la marca. */
+.crash-pick {
   flex: 1;
   min-width: 0;
 }
 
+.crash-pick input {
+  margin-top: 2px;
+}
+
+/* Las líneas del error que señalan el mod, debajo de su nombre. */
+.crash-why {
+  margin: -4px 10px 6px 42px;
+}
+
+.crash-why summary,
 .crash-details summary {
   width: fit-content;
   color: var(--text-2);
@@ -372,10 +388,17 @@
   cursor: pointer;
 }
 
+.crash-why summary {
+  color: var(--text-3);
+  font-size: 12px;
+}
+
+.crash-why summary:hover,
 .crash-details summary:hover {
   color: var(--text);
 }
 
+.crash-why code,
 .crash-details code {
   display: block;
   margin-top: 8px;
@@ -388,6 +411,7 @@
   font-size: 12px;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+  tab-size: 2;
 }
 
 .tiles {

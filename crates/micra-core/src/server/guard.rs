@@ -62,6 +62,7 @@ impl GuardState {
     }
 
     pub async fn save(&self, server_dir: &Path) -> Result<()> {
+        crate::fsutil::internal_dir(server_dir, ".micra")?;
         write_atomic(
             &server_dir.join(STATE_FILE),
             &serde_json::to_vec_pretty(self)?,

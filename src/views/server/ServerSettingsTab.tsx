@@ -141,7 +141,7 @@ export function ServerSettingsTab(props: Props) {
     !running || !sandbox
       ? null
       : sandbox.kind === "landlock"
-        ? t.serverSettings.sandboxLandlock(sandbox.abi)
+        ? t.serverSettings.sandboxLandlock(sandbox.abi, sandbox.seccomp)
         : sandbox.kind === "jobObject"
           ? sandbox.lowIntegrity
             ? t.serverSettings.sandboxJobLow

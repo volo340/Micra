@@ -333,22 +333,169 @@ fn parse_sha1(text: &str) -> Option<String> {
     (hash.len() == 40 && hash.bytes().all(|b| b.is_ascii_hexdigit())).then_some(hash)
 }
 
-/// Ejecuta un instalador de Forge/NeoForge ya presente en disco (descargado
-/// y verificado por nosotros, o incluido en un server pack verificado) con
-/// `--installServer` y devuelve cómo arrancar el resultado.
+/// Instala el loader de un server pack que trae su instalador sin ejecutar.
+///
+/// Ese jar lo pone el autor del pack: podría ser cualquier programa con el
+/// nombre de un instalador de Forge, y el instalador se ejecuta con más
+/// permisos que el servidor. Así que solo se ejecuta si es byte a byte el
+/// oficial (mismo SHA-1 que publica el repositorio de Forge o NeoForge para
+/// esa versión); si no, se descarga el oficial y se usa ese.
+pub async fn install_bundled(
+    http: &reqwest::Client,
+    bundled: &Path,
+    server_dir: &Path,
+    java: &JavaRuntime,
+) -> Result<LaunchTarget> {
+    let unknown = || {
+        Error::Api(tr!(
+            "el server pack trae un instalador que Micra no reconoce como de Forge o NeoForge, así que no se ejecutará. Prueba con la versión de Modrinth del pack o instala el servidor a mano e impórtalo",
+            "the server pack includes an installer that Micra does not recognise as Forge or NeoForge, so it will not be run. Try the pack's Modrinth version, or install the server by hand and import it"
+        ))
+    };
+    let jar = bundled.to_path_buf();
+    let coordinates = tokio::task::spawn_blocking(move || installer_coordinates(&jar))
+        .await
+        .expect("leer el instalador no debería entrar en pánico")
+        .ok_or_else(unknown)?;
+    let url = official_installer_url(&coordinates).ok_or_else(unknown)?;
+    let sha1 = maven_sha1(http, &url).await?;
+    let result = if crate::download::hash_file(bundled, HashAlgo::Sha1).await? == sha1 {
+        run_installer(bundled, server_dir, java).await
+    } else {
+        tracing::warn!("el instalador del pack no es el oficial; se descarga {url}");
+        let official = server_dir.join("micra-installer.jar");
+        let expected = ExpectedHash::new(HashAlgo::Sha1, sha1);
+        download_file(http, &url, &official, Some(&expected), None).await?;
+        let result = run_installer(&official, server_dir, java).await;
+        let _ = tokio::fs::remove_file(&official).await;
+        result
+    };
+    let _ = tokio::fs::remove_file(bundled).await;
+    result
+}
+
+/// Artefacto Maven de un instalador: grupo, nombre y versión.
+#[derive(Debug, PartialEq, Eq)]
+struct Coordinates {
+    group: String,
+    artifact: String,
+    version: String,
+}
+
+/// Lee de `install_profile.json` qué instalador es; si no lo dice, lo deduce
+/// del nombre del archivo (`forge-1.20.1-47.2.0-installer.jar`).
+fn installer_coordinates(installer: &Path) -> Option<Coordinates> {
+    #[derive(Deserialize)]
+    struct Profile {
+        path: Option<String>,
+        version: Option<String>,
+        install: Option<Legacy>,
+    }
+    #[derive(Deserialize)]
+    struct Legacy {
+        path: Option<String>,
+    }
+    const MAX_PROFILE: u64 = 4 * 1024 * 1024;
+
+    let from_path = |path: &str| {
+        let mut parts = path.split(':');
+        Some(Coordinates {
+            group: parts.next()?.to_string(),
+            artifact: parts.next()?.to_string(),
+            version: parts.next()?.to_string(),
+        })
+    };
+    let profile = (|| {
+        let mut zip = zip::ZipArchive::new(std::fs::File::open(installer).ok()?).ok()?;
+        let entry = zip.by_name("install_profile.json").ok()?;
+        let mut raw = Vec::new();
+        std::io::Read::read_to_end(&mut std::io::Read::take(entry, MAX_PROFILE), &mut raw).ok()?;
+        let profile: Profile = serde_json::from_slice(&raw).ok()?;
+        Some((profile, String::from_utf8_lossy(&raw).into_owned()))
+    })();
+    if let Some((profile, raw)) = &profile {
+        let path = profile
+            .path
+            .as_deref()
+            .or(profile.install.as_ref().and_then(|i| i.path.as_deref()));
+        if let Some(c) = path.and_then(from_path) {
+            return Some(c);
+        }
+        if let Some(version) = &profile.version {
+            if let Some(v) = version.strip_prefix("neoforge-") {
+                return from_path(&format!("net.neoforged:neoforge:{v}"));
+            }
+            // `1.20.1-forge-47.2.0`; el NeoForge de 1.20.1 usaba el mismo
+            // formato desde su propio repositorio.
+            if let Some((mc, v)) = version.split_once("-forge-") {
+                let group = if raw.contains("net.neoforged:forge:") {
+                    "net.neoforged"
+                } else {
+                    "net.minecraftforge"
+                };
+                return from_path(&format!("{group}:forge:{mc}-{v}"));
+            }
+        }
+    }
+    let name = installer.file_name()?.to_str()?.to_ascii_lowercase();
+    let stem = name.strip_suffix("-installer.jar")?;
+    if let Some(v) = stem.strip_prefix("neoforge-") {
+        return from_path(&format!("net.neoforged:neoforge:{v}"));
+    }
+    let v = stem.strip_prefix("forge-")?;
+    from_path(&format!("net.minecraftforge:forge:{v}"))
+}
+
+/// URL del instalador oficial, solo para Forge y NeoForge y con una versión
+/// que no pueda cambiar la ruta.
+fn official_installer_url(c: &Coordinates) -> Option<String> {
+    let valid = !c.version.is_empty()
+        && c.version.len() <= 64
+        && c.version
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'-' | b'_' | b'+'));
+    if !valid {
+        return None;
+    }
+    let base = match (c.group.as_str(), c.artifact.as_str()) {
+        ("net.minecraftforge", "forge") => {
+            "https://maven.minecraftforge.net/net/minecraftforge/forge"
+        }
+        ("net.neoforged", "neoforge") => {
+            "https://maven.neoforged.net/releases/net/neoforged/neoforge"
+        }
+        ("net.neoforged", "forge") => "https://maven.neoforged.net/releases/net/neoforged/forge",
+        _ => return None,
+    };
+    Some(format!(
+        "{base}/{v}/{a}-{v}-installer.jar",
+        v = c.version,
+        a = c.artifact
+    ))
+}
+
+/// Ejecuta un instalador oficial de Forge/NeoForge ya verificado con
+/// `--installServer` y devuelve cómo arrancar el resultado. En Linux va con
+/// el mismo aislamiento que el servidor: solo escribe en su carpeta.
 pub async fn run_installer(
     installer: &Path,
     server_dir: &Path,
     java: &JavaRuntime,
 ) -> Result<LaunchTarget> {
+    use crate::server::launcher::{apply_sandbox_env, sandbox_jvm_args};
+
     let mut cmd = tokio::process::Command::new(&java.java_bin);
-    cmd.arg("-jar")
+    apply_sandbox_env(&mut cmd, server_dir);
+    cmd.env("JAVA_HOME", &java.home)
+        .args(sandbox_jvm_args(server_dir))
+        .arg("-XX:+PerfDisableSharedMem")
+        .arg("-jar")
         .arg(installer)
         .arg("--installServer")
         .current_dir(server_dir);
     #[cfg(windows)]
     cmd.creation_flags(crate::server::launcher::CREATE_NO_WINDOW);
-    let output = cmd.output().await?;
+    let output = crate::server::process::output_isolated(&mut cmd, server_dir, java).await?;
     let mut log = installer.as_os_str().to_os_string();
     log.push(".log");
     let _ = tokio::fs::remove_file(&log).await;
@@ -373,6 +520,72 @@ pub async fn run_installer(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn installer(dir: &Path, name: &str, profile: Option<&str>) -> std::path::PathBuf {
+        use std::io::Write;
+        let path = dir.join(name);
+        let mut zip = zip::ZipWriter::new(std::fs::File::create(&path).unwrap());
+        if let Some(profile) = profile {
+            zip.start_file::<_, ()>("install_profile.json", Default::default())
+                .unwrap();
+            zip.write_all(profile.as_bytes()).unwrap();
+        }
+        zip.finish().unwrap();
+        path
+    }
+
+    #[test]
+    fn bundled_installers_map_to_official_ones() {
+        let dir = tempfile::tempdir().unwrap();
+        let c = |name, profile| installer_coordinates(&installer(dir.path(), name, profile));
+        let url = |name, profile| c(name, profile).and_then(|c| official_installer_url(&c));
+
+        // Forge antiguo: `install.path`.
+        assert_eq!(
+            url(
+                "a-installer.jar",
+                Some(r#"{"install":{"path":"net.minecraftforge:forge:1.12.2-14.23.5.2860","minecraft":"1.12.2"}}"#)
+            )
+            .as_deref(),
+            Some("https://maven.minecraftforge.net/net/minecraftforge/forge/1.12.2-14.23.5.2860/forge-1.12.2-14.23.5.2860-installer.jar")
+        );
+        // Forge moderno: `version`.
+        assert_eq!(
+            url("b-installer.jar", Some(r#"{"spec":1,"version":"1.20.1-forge-47.2.0","minecraft":"1.20.1"}"#)).as_deref(),
+            Some("https://maven.minecraftforge.net/net/minecraftforge/forge/1.20.1-47.2.0/forge-1.20.1-47.2.0-installer.jar")
+        );
+        // NeoForge, y el de 1.20.1 que usaba el formato de Forge.
+        assert_eq!(
+            url("c-installer.jar", Some(r#"{"spec":1,"version":"neoforge-21.1.77","minecraft":"1.21.1"}"#)).as_deref(),
+            Some("https://maven.neoforged.net/releases/net/neoforged/neoforge/21.1.77/neoforge-21.1.77-installer.jar")
+        );
+        assert_eq!(
+            url(
+                "d-installer.jar",
+                Some(r#"{"version":"1.20.1-forge-47.1.106","libraries":[{"name":"net.neoforged:forge:1.20.1-47.1.106:universal"}]}"#)
+            )
+            .as_deref(),
+            Some("https://maven.neoforged.net/releases/net/neoforged/forge/1.20.1-47.1.106/forge-1.20.1-47.1.106-installer.jar")
+        );
+        // Sin perfil: el nombre del archivo.
+        assert_eq!(
+            url("forge-1.16.5-36.2.39-installer.jar", None).as_deref(),
+            Some("https://maven.minecraftforge.net/net/minecraftforge/forge/1.16.5-36.2.39/forge-1.16.5-36.2.39-installer.jar")
+        );
+        // Otro grupo o una versión que cambiaría la ruta: no se instala.
+        assert_eq!(
+            url("e-installer.jar", Some(r#"{"path":"com.evil:forge:1.0"}"#)),
+            None
+        );
+        assert_eq!(
+            url(
+                "f-installer.jar",
+                Some(r#"{"path":"net.minecraftforge:forge:../../x"}"#)
+            ),
+            None
+        );
+        assert_eq!(url("cosa.jar", None), None);
+    }
 
     #[test]
     fn forge_versions_from_promotions() {
