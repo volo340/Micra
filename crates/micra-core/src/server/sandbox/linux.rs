@@ -601,7 +601,12 @@ public class Probe {
     ex.shutdown();
     System.out.println("TMP " + Files.createTempFile("probe", ".tmp").startsWith(System.getProperty("java.io.tmpdir")));
     try { Files.readAllBytes(Path.of(a[0])); System.out.println("SECRET READ"); } catch (Exception e) { System.out.println("SECRET DENIED"); }
-    try (SocketChannel c = SocketChannel.open(StandardProtocolFamily.UNIX)) { System.out.println("UNIX OPEN"); } catch (Exception e) { System.out.println("UNIX DENIED"); }
+    ProtocolFamily unix = null;
+    try { unix = StandardProtocolFamily.valueOf("UNIX"); } catch (IllegalArgumentException e) { System.out.println("UNIX N/A"); }
+    if (unix != null) {
+      try (SocketChannel c = (SocketChannel) SocketChannel.class.getMethod("open", ProtocolFamily.class).invoke(null, unix)) { System.out.println("UNIX OPEN"); }
+      catch (java.lang.reflect.InvocationTargetException e) { System.out.println("UNIX DENIED"); }
+    }
     try (Selector sel = Selector.open()) { System.out.println("SELECTOR OK"); }
   }
 }
@@ -630,11 +635,15 @@ public class Probe {
             "THREAD OK",
             "TMP true",
             "SECRET DENIED",
-            "UNIX DENIED",
             "SELECTOR OK",
         ] {
             assert!(text.contains(expected), "falta «{expected}»: {text}");
         }
+        // Java abre sockets Unix desde la 16; la 11 no tiene con qué.
+        assert!(
+            text.contains("UNIX DENIED") || text.contains("UNIX N/A"),
+            "falta «UNIX DENIED»: {text}"
+        );
     }
 
     /// seccomp: sin sockets Unix ni espacios de nombres, con internet; y
@@ -652,19 +661,28 @@ public class Probe {
         let root = tempfile::tempdir_in(std::env::current_dir().unwrap()).unwrap();
         let server = root.path().join("server");
         std::fs::create_dir_all(&server).unwrap();
-        let py = "import os, socket\n\
+        // os.unshare llegó en Python 3.12 (Ubuntu 22.04 trae la 3.10), así
+        // que unshare se llama directamente.
+        let py = format!(
+            "import ctypes, socket\n\
+            libc = ctypes.CDLL(None, use_errno=True)\n\
             def tryit(name, f):\n\
             \x20   try:\n\
             \x20       f()\n\
             \x20       print(name + ' OK')\n\
             \x20   except OSError as e:\n\
             \x20       print(name + ' BLOQUEADO ' + str(e.errno))\n\
+            def unshare_user():\n\
+            \x20   if libc.unshare({newuser}) != 0:\n\
+            \x20       raise OSError(ctypes.get_errno(), 'unshare')\n\
             tryit('unix', lambda: socket.socket(socket.AF_UNIX, socket.SOCK_STREAM))\n\
             tryit('inet', lambda: socket.socket(socket.AF_INET, socket.SOCK_STREAM))\n\
             tryit('inet6', lambda: socket.socket(socket.AF_INET6, socket.SOCK_DGRAM))\n\
             tryit('par', lambda: socket.socketpair())\n\
-            tryit('userns', lambda: os.unshare(os.CLONE_NEWUSER))\n\
-            tryit('hilo', lambda: __import__('threading').Thread(target=lambda: None).start())\n";
+            tryit('userns', unshare_user)\n\
+            tryit('hilo', lambda: __import__('threading').Thread(target=lambda: None).start())\n",
+            newuser = libc::CLONE_NEWUSER,
+        );
         std::fs::write(server.join("t.py"), py).unwrap();
         let out = run_isolated(&server, "/usr/bin/python3 -B t.py").await;
         assert!(out.contains("unix BLOQUEADO 13"), "{out}");
